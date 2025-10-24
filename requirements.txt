@@ -1,0 +1,13 @@
+streamlit
+pandas
+numpy
+scikit-learn
+joblib
+plotly
+lightgbm
+xgboost
+catboost
+requests
+lightkurve
+tensorflow
+keras
