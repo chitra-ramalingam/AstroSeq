@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
+from sklearn.metrics import roc_curve, classification_report, confusion_matrix
+from sklearn.metrics import precision_recall_curve, average_precision_score
 
 class CNNPlots:
     def __init__(self):
@@ -48,8 +50,21 @@ class CNNPlots:
             print(f"Fallback accuracy: {acc:.3f}")
             return
         y_prob = model.predict(X_test).ravel()
-        fpr, tpr, _ = roc_curve(y_test, y_prob)
+        ap = average_precision_score(y_test, y_prob)
+        print(f"Average Precision (AP): {ap:.3f}")
+        pos_rate = (y_test==1).mean()
+        print(f"AP={ap:.3f} | baseline={pos_rate:.3f}")
+
+        fpr, tpr, thr = roc_curve(y_test, y_prob)
         roc_auc = auc(fpr, tpr)
+        best = np.argmax(tpr - fpr)          # Youden’s J
+        best_thr = thr[best]
+        y_pred = (y_prob >= best_thr).astype(int)
+        acc = (y_pred == y_test).mean()
+        print("Best threshold:", best_thr, "TPR:", tpr[best], "FPR:", fpr[best])
+        print(confusion_matrix(y_test, y_pred))
+        print(classification_report(y_test, y_pred, digits=3))
+
         plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.3f}")
         plt.plot([0,1],[0,1],'--')
         plt.xlabel("FPR"); plt.ylabel("TPR"); plt.title("ROC"); plt.legend(); plt.show()
