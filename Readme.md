@@ -1,19 +1,24 @@
 
-Training On TESS Data .
+Training On TESS  , Kepler , K2 , TOI Data
 -----------------------
+Kepler → IDs: KIC (e.g., KIC 7281229), time = BKJD (= BJD–2454833).
 
-Still more to work on AUC.
+K2 (Kepler’s extended mission) → IDs: EPIC (e.g., EPIC 201367065), time = BKJD.
 
-Target → light curve: For each star (prefer TIC id), we downloaded its TESS light curve and cleaned it (NaNs out, normalize).
+TESS → IDs: TIC (e.g., TIC 141914082) and often referenced via TOI numbers, time = BTJD (= BJD–2457000).
 
-Segmenting: Chopped (e.g., 200 points) and z-scored each window. That gives the CNN uniform, comparable snippets.
+TESS/NEA columns: pl_tranmid (BJD_TDB), pl_orbper, pl_trandurh
+
+Kepler/KOI columns: koi_time0bk (BKJD), koi_period, koi_duration
+
+Matched the time systems to Lightkurve:
+
+TESS light curves are BTJD →  converted pl_tranmid from BJD to BTJD 
+
+Kepler/K2 light curves are BKJD → koi_time0bk is already in BKJD.
 
 Labels: 
-Transit → class 1 (transit-like), anything else → class 0 (non-transit).
-
-Group-aware split: Kept all segments from the same star on one side (train or test) so the model can’t “cheat” by seeing nearly identical windows from the same source. 
-Model (1D-CNN): A small stack of 1D convolutions + pooling, then global average pooling and a sigmoid output. Convs learn the local shape of a transit dip; pooling/GAP compress to a decision.
-
-Training & eval: Accuracy/ROC/PR on held-out stars; optional per-star scoring by aggregating segment predictions.
-
--------- Took a lot to improvise splits.
+Get time & PDCSAP flux (quality mask, remove NaNs; optional outlier clip/flatten).
+plit the flux into windows of length window with stride ≈ window/4, z-score each segment.
+Kept a group id (TIC/KIC/EPIC/name) for every segment, capped how many segments we take per star (to prevent one star from dominating), and split train/test by group so the same star never leaks across splits.
+Grouped splits prevents leakage
