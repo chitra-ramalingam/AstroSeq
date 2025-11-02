@@ -106,7 +106,7 @@ class Astro1DCNN:
         segs, spans = [], []
         for i in range(0, len(flux) - w + 1, stride):
             seg = flux[i:i+w].astype(np.float32)
-            mu = seg.mean(); sd = seg.std() + 1e-6
+            mu = seg.mean(); sd = seg.std() + 1e-6      # per segment z-score
             segs.append((seg - mu) / sd)
             spans.append((i, i+w))
         return np.asarray(segs, np.float32), np.asarray(spans, int)
@@ -229,11 +229,13 @@ class Astro1DCNN:
     def declareModel(self):
         w = self.window
         model = models.Sequential([
-            layers.Conv1D(32, 7, padding='same', activation='relu', input_shape=(w,1)),
+            layers.Conv1D(32, 11, padding='same', activation='relu', input_shape=(w,1)),
             layers.MaxPooling1D(2),
-            layers.Conv1D(64, 5, padding='same', activation='relu'),
+            layers.Conv1D(64, 7, padding='same', activation='relu'),
             layers.MaxPooling1D(2),
-            layers.Conv1D(64, 3, padding='same', activation='relu'),
+            layers.Conv1D(64, 5, padding='same', activation='relu', dilation_rate=2),
+            layers.MaxPooling1D(2),
+            layers.Conv1D(64, 3, padding='same', activation='relu', dilation_rate=4),
             layers.GlobalAveragePooling1D(),
             layers.Dropout(0.3),
             layers.Dense(1, activation='sigmoid')
