@@ -3,6 +3,9 @@ import numpy as np
 import lightkurve as lk
 import tensorflow as tf
 from tensorflow.keras import layers, models
+from src.Classifiers.isolation_forest import IsolationForestScorer
+from src.Classifiers.CnnNNet import CnnNNet
+
 
 class Astro1DCNN:
     def __init__(self, window=200, mission="TESS", author="SPOC"):
@@ -73,7 +76,7 @@ class Astro1DCNN:
             target, pref = self._row_to_target_and_mission(row)
             if not target:
                 return None, None, None
-
+            print("Fetching from lightcurve:", target)
             missions_try = [pref] if pref else []
             for m in ["TESS", "Kepler", "K2"]:
                 if m and m not in missions_try:
@@ -84,29 +87,39 @@ class Astro1DCNN:
                 if len(sr) == 0:
                     continue
                 if use_all:
-                    sr = sr[:max_files] if max_files else sr
-                    lcc = sr.download_all()
+                    lcc = sr[:max_files].download_all()
                     lc = lcc.stitch().remove_nans().normalize()
                 else:
                     lc = sr[0].download().remove_nans().normalize()
-                time = lc.time.value.astype(np.float64)   # BTJD for TESS, BKJD for Kepler/K2
+                try:
+                    lc_flat = lc.flatten(window_length=201, polyorder=2)
+                except Exception:
+                    lc_flat = lc.copy()
+
+                time = lc.time.value.astype(np.float64)
                 flux = lc.flux.value.astype(np.float32)
-                return time, flux, m
+                flux_flat = lc_flat.flux.value.astype(np.float32)
+                return time, np.vstack([flux, flux_flat]).T, m  # shape (T, 2)
+                
             return None, None, None
         except Exception:
             return None, None, None
 
     # ---------- preprocessing ----------
     def segment_with_idx(self, flux, w=None, stride=None):
-        """Overlapping segments + per-segment z-score. Returns (segs, spans)."""
+        # flux shape: (T, C) where C=2 (raw, flat) or (T,) which we’ll promote to (T,1)
+        if flux.ndim == 1: flux = flux[:, None]
+        C = flux.shape[1]
         if w is None: w = self.window
         if stride is None: stride = w // 4
         if w <= 0 or len(flux) < w:
-            return np.empty((0, w), np.float32), np.empty((0, 2), int)
+            return np.empty((0, w, C), np.float32), np.empty((0, 2), int)
+
         segs, spans = [], []
         for i in range(0, len(flux) - w + 1, stride):
-            seg = flux[i:i+w].astype(np.float32)
-            mu = seg.mean(); sd = seg.std() + 1e-6      # per segment z-score
+            seg = flux[i:i+w].astype(np.float32)                # (w, C)
+            mu  = seg.mean(axis=0, keepdims=True)
+            sd  = seg.std(axis=0, keepdims=True) + 1e-6
             segs.append((seg - mu) / sd)
             spans.append((i, i+w))
         return np.asarray(segs, np.float32), np.asarray(spans, int)
@@ -132,8 +145,8 @@ class Astro1DCNN:
                        any_author=True, use_all=True, max_files=4,
                        stride=None, per_star_cap=40):
         df = pd.read_csv(csv_path)
+        ##Some stars (many sectors/cadences) yield hundreds of segments; others yield only a few. Loss is summed over segments, so without a cap one prolific star can contribute 100× more gradient than another → the model overfits to that star’s quirks.
 
-        # dedupe by any usable ID
         subset_cols = [c for c in ["tid","hostname","toi","kepid","kepler_name","koi_name","koi","epic"] if c in df.columns]
         if subset_cols:
             df = df.drop_duplicates(subset=subset_cols)
@@ -152,12 +165,20 @@ class Astro1DCNN:
                 else:          skipped["dl_fail"] += 1
                 continue
 
+           # scorer = IsolationForestScorer(window=200, n_components=20, contamination=0.01, threshold_quantile=0.99)
+
+            # Option A: per-star, fit on that star's segments
+           # out = scorer.score_from_flux(flux, segment_with_idx_fn= self.segment_with_idx, fit_on_self=True)
+           # scores, flags, spans,segs = out["scores"], out["flags"], out["spans"], out["segs"]
+
+
             # segment
             segs, spans = self.segment_with_idx(flux, w=self.window, stride=stride)
             if len(segs) == 0:
                 skipped["empty"] += 1
                 continue
 
+            tt = self._row_to_target_and_mission(row)[0]
             # ephemeris
             t0, period, dur_h, timesys = self._get_ephemeris(row)
             # Ensure ephemeris on same time system as LC
@@ -187,11 +208,14 @@ class Astro1DCNN:
             # cap per star
             target_id = self._row_to_target_and_mission(row)[0]
             if per_star_cap is not None and len(segs) > per_star_cap:
-                # keep up to cap, but preserve the class mix
+                # segs: all segments for this star,y_seg: labels for those segments (1 = transit overlap, 0 = off-transit)
+                # spans: index ranges of each segment in the original light curve
+
                 pos_idx = np.where(y_seg == 1)[0]
                 neg_idx = np.where(y_seg == 0)[0]
                 take_pos = min(len(pos_idx), per_star_cap // 2)
                 take_neg = min(len(neg_idx), per_star_cap - take_pos)
+                # Randomly sample those indices without replacement
                 choose = np.concatenate([
                     np.random.default_rng(42).choice(pos_idx, size=take_pos, replace=False) if take_pos>0 else np.array([], int),
                     np.random.default_rng(43).choice(neg_idx, size=take_neg, replace=False) if take_neg>0 else np.array([], int),
@@ -216,68 +240,105 @@ class Astro1DCNN:
         y = np.concatenate(labels_all).astype(np.int32)
         groups = np.concatenate(groups_all)
 
-        # shuffle consistently
         idx = np.arange(len(y)); np.random.shuffle(idx)
         X, y, groups = X[idx], y[idx], groups[idx]
-
+        #X.shape == (5, 200, 1), y.shape == (5,) (e.g., [1,0,0,1,0])
+        # #groups.shape == (5,) (e.g., ['TIC A','TIC A','TIC A','TIC B','TIC B'])
         print("Segments per class:", dict(zip(*np.unique(y, return_counts=True))))
         print("Stars with positives:", len(pos_groups), "Stars w/o positives:", len(neg_groups))
         print("Skipped:", skipped)
         print("Total segments:", X.shape[0], "Unique stars:", len(np.unique(groups)))
         return X, y, groups
 
-    def declareModel(self):
-        w = self.window
-        model = models.Sequential([
-            layers.Conv1D(32, 11, padding='same', activation='relu', input_shape=(w,1)),
-            layers.MaxPooling1D(2),
-            layers.Conv1D(64, 7, padding='same', activation='relu'),
-            layers.MaxPooling1D(2),
-            layers.Conv1D(64, 5, padding='same', activation='relu', dilation_rate=2),
-            layers.MaxPooling1D(2),
-            layers.Conv1D(64, 3, padding='same', activation='relu', dilation_rate=4),
-            layers.GlobalAveragePooling1D(),
-            layers.Dropout(0.3),
-            layers.Dense(1, activation='sigmoid')
-        ])
-        model.compile(optimizer=tf.keras.optimizers.Adam(1e-4),
-                      loss='binary_crossentropy', metrics=['accuracy'])
-        return model
+    # def declareModel(self):
+    #     w = self.window
+    
+    #     inputs = layers.Input(shape=(w,1))
+    #     x = layers.Conv1D(32, 11, padding='same', activation='relu')(inputs)
+    #     x = layers.BatchNormalization()(x)
+    #     x = layers.MaxPooling1D(2)(x)
+    #     x = layers.Conv1D(64, 7, padding='same', activation='relu')(x)
+    #     x = layers.BatchNormalization()(x)
+    #     x = layers.MaxPooling1D(2)(x)
+    #     x = layers.Conv1D(64, 5, padding='same', activation='relu', dilation_rate=2)(x)
+    #     x = layers.BatchNormalization()(x)
+    #     x = layers.MaxPooling1D(2)(x)
+    #     x = layers.Conv1D(64, 3, padding='same', activation='relu', dilation_rate=4)(x)
+    #     x = layers.GlobalAveragePooling1D()(x)
+    #     x = layers.Dropout(0.3)(x)
+    #     outputs = layers.Dense(1, activation='sigmoid')(x)
+
+    #     model = models.Model(inputs, outputs)
+    #     model.compile(
+    #         optimizer=tf.keras.optimizers.Adam(1e-3),
+    #         loss='binary_crossentropy',
+    #         metrics=[
+    #             tf.keras.metrics.AUC(curve="ROC", name="roc_auc"),
+    #             tf.keras.metrics.AUC(curve="PR",  name="pr_auc")
+    #         ]
+    #     )
+    #     return model
+    def declareModel(self, channels=1):
+        cnn_nnet = CnnNNet(window=self.window, channels=channels)
+        return cnn_nnet.build_inception_resnet_1d(self.window, channels)
 
     # ---------- splitting ----------
-    def stratified_group_split(self, y, groups, test_size=0.2, seed=42):
+    def stratified_group_train_val_test(self, y, groups, val_size=0.2, test_size=0.2, seed=42):
         rng = np.random.default_rng(seed)
         y = np.asarray(y); groups = np.asarray(groups)
         uniq = np.unique(groups)
-        # group label = 1 if ANY positive in that group
         grp_lbl = np.array([int((y[groups == g] == 1).any()) for g in uniq], dtype=int)
 
-        train_groups, test_groups = [], []
-        for lbl in [0, 1]:
-            g = uniq[grp_lbl == lbl]
-            if len(g) == 0:
-                continue
-            rng.shuffle(g)
-            n_test = max(1, int(len(g) * test_size))
-            test_groups += list(g[:n_test])
-            train_groups += list(g[n_test:])
+        def split_groups(gs, ts):
+            gs0 = gs[grp_lbl[np.isin(uniq, gs)] == 0]
+            gs1 = gs[grp_lbl[np.isin(uniq, gs)] == 1]
+            rng.shuffle(gs0); rng.shuffle(gs1)
+            n = int(len(gs) * ts)
+            take0 = int(len(gs0) * ts); take1 = n - take0
+            return np.concatenate([gs0[:take0], gs1[:take1]]), np.concatenate([gs0[take0:], gs1[take1:]])
 
-        test_mask = np.isin(groups, test_groups)
-        train_idx = np.where(~test_mask)[0]
-        test_idx  = np.where(test_mask)[0]
-        return train_idx, test_idx
+        # first carve out test
+        test_groups, remain_groups = split_groups(uniq, test_size)
+        # then from remain carve out val
+        val_groups, train_groups = split_groups(remain_groups, val_size/(1.0 - test_size))
 
+        def idx_for(gs): return np.where(np.isin(groups, gs))[0]
+        return idx_for(train_groups), idx_for(val_groups), idx_for(test_groups)
+
+    
     # ---------- train/eval ----------
     def trainModel(self, model, X, y, groups, epochs=20, batch_size=32):
-        train_idx, test_idx = self.stratified_group_split(y, groups, test_size=0.2, seed=42)
-        X_train, X_test = X[train_idx], X[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-        callbacks = [tf.keras.callbacks.EarlyStopping(patience=3, restore_best_weights=True)]
-        history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size,
-                            validation_split=0.2, callbacks=callbacks, verbose=1)
+        train_idx, val_idx, test_idx = self.stratified_group_train_val_test(y, groups)
+        X_train, y_train = X[train_idx], y[train_idx]
+        X_val,   y_val   = X[val_idx],   y[val_idx]
+        X_test,  y_test  = X[test_idx],  y[test_idx]
+
+        cbs = [
+            tf.keras.callbacks.ReduceLROnPlateau(
+                monitor="val_pr_auc", mode="max", factor=0.5, patience=4, min_lr=1e-5, verbose=1
+            ),
+            tf.keras.callbacks.EarlyStopping(
+                monitor="val_pr_auc", mode="max", patience=10, restore_best_weights=True
+            ),
+            tf.keras.callbacks.ModelCheckpoint(
+                "best.keras", monitor="val_pr_auc", mode="max", save_best_only=True
+            ),
+        ]
+        history = model.fit(
+            X_train, y_train,
+            validation_data=(X_val, y_val),
+            epochs=60, batch_size=128,
+            class_weight={0:1.0, 1: max(1.0, (y_train==0).sum()/(y_train==1).sum()+1e-9)},
+            callbacks=cbs, verbose=1
+        )
+
         return history, X_test, y_test
 
     def evaluateModel(self, model, X_test, y_test):
-        loss, acc = model.evaluate(X_test, y_test, verbose=0)
-        print(f"Test Accuracy: {acc:.3f}")
-        return acc
+        res = model.evaluate(X_test, y_test, verbose=0)
+        names = model.metrics_names                 # e.g., ['loss','roc_auc','pr_auc','accuracy']
+        if not isinstance(res, (list, tuple)):
+            res = [res]
+        report = dict(zip(names, res))
+        print("Test -> " + " | ".join(f"{k}: {v:.4f}" for k, v in report.items()))
+        return report
