@@ -28,11 +28,25 @@ class CnnModel:
                         stride=50,             # overlap windows to catch dips
                         per_star_cap=40        # cap segments per star to avoid dominance
                     )
-        model = astro_cnn.declareModel()
-        hist, X_test, y_test = astro_cnn.trainModel(model, X, y,groups=groups, epochs=30)
+        model = astro_cnn.declareModel(channels=X.shape[2])   # <-- not 1 anymore
+
+        hist, X_test, y_test,X_val,y_val = astro_cnn.trainModel(model, X, y,groups=groups, epochs=60, batch_size=128)
 
         astro_cnn.evaluateModel(model, X_test, y_test)
-        cnn_plots = CNNPlots()
-        cnn_plots.plot_history(hist)
-        cnn_plots.plot_roc_pr(model, X_test, y_test)
-        cnn_plots.safe_plot_roc( model, X_test, y_test)
+
+
+        plots = CNNPlots()
+
+        # after training:
+        plots.plot_history(hist)
+
+        # curves
+        plots.plot_roc_pr(model, X_val,  y_val,  set_name="VAL")
+        plots.plot_roc_pr(model, X_test, y_test, set_name="TEST")
+
+        # robust ROC + reports
+        plots.safe_plot_roc(model, X_val,  y_val,  set_name="VAL")
+        plots.safe_plot_roc(model, X_test, y_test, set_name="TEST")
+
+        # pick a good threshold on VAL, then evaluate on TEST
+        thr = plots.evaluate_with_threshold(model, X_val, y_val, X_test, y_test, mode="balanced_accuracy")

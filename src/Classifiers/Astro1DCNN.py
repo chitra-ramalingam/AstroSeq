@@ -97,30 +97,30 @@ class Astro1DCNN:
                     lc_flat = lc.copy()
 
                 time = lc.time.value.astype(np.float64)
-                flux = lc.flux.value.astype(np.float32)
+                fl_raw = lc.flux.value.astype(np.float32)
                 flux_flat = lc_flat.flux.value.astype(np.float32)
-                return time, np.vstack([flux, flux_flat]).T, m  # shape (T, 2)
-                
+                flux = np.stack([fl_raw, flux_flat], axis=-1)  # (T, 2)
+                return time, flux, m
+
             return None, None, None
         except Exception:
             return None, None, None
 
     # ---------- preprocessing ----------
+    # ---- segment_with_idx ----
     def segment_with_idx(self, flux, w=None, stride=None):
-        # flux shape: (T, C) where C=2 (raw, flat) or (T,) which we’ll promote to (T,1)
         if flux.ndim == 1: flux = flux[:, None]
-        C = flux.shape[1]
+        T, C = flux.shape
         if w is None: w = self.window
-        if stride is None: stride = w // 4
-        if w <= 0 or len(flux) < w:
+        if stride is None: stride = max(1, w // 4)
+        if w <= 0 or T < w:
             return np.empty((0, w, C), np.float32), np.empty((0, 2), int)
 
         segs, spans = [], []
-        for i in range(0, len(flux) - w + 1, stride):
-            seg = flux[i:i+w].astype(np.float32)                # (w, C)
-            mu  = seg.mean(axis=0, keepdims=True)
-            sd  = seg.std(axis=0, keepdims=True) + 1e-6
-            segs.append((seg - mu) / sd)
+        for i in range(0, T - w + 1, stride):
+            seg = flux[i:i+w].astype(np.float32)          # (w, C)
+            seg = seg - np.median(seg, axis=0, keepdims=True)  # center only; keep amplitude
+            segs.append(seg)
             spans.append((i, i+w))
         return np.asarray(segs, np.float32), np.asarray(spans, int)
 
@@ -158,6 +158,21 @@ class Astro1DCNN:
 
         for _, row in df.iterrows():
             time, flux, mission = self.fetch_flux_row(row, use_all=use_all, max_files=max_files, any_author=any_author)
+            flux = np.asarray(flux, dtype=np.float32)
+            if flux.ndim == 1: 
+                flux = flux[:, None]  # (T, C)
+            try:
+                if flux.size == 0 or flux.shape[0] < self.window:
+                    skipped["empty"] += 1
+                    continue
+            except Exception:
+                skipped["empty"] += 1
+                continue
+
+            med = np.median(flux, axis=0, keepdims=True)
+            mad = np.median(np.abs(flux - med), axis=0, keepdims=True) + 1e-6
+            flux = (flux - med) / mad
+
             if time is None:
                 # figure out if target missing or download failed
                 target, _ = self._row_to_target_and_mission(row)
@@ -236,10 +251,9 @@ class Astro1DCNN:
         # final arrays
         if not segs_all:
             raise RuntimeError("No usable data collected.")
-        X = np.vstack(segs_all).astype(np.float32).reshape(-1, self.window, 1)
+        X = np.vstack(segs_all).astype(np.float32)   # shape: (N, window, C)
         y = np.concatenate(labels_all).astype(np.int32)
         groups = np.concatenate(groups_all)
-
         idx = np.arange(len(y)); np.random.shuffle(idx)
         X, y, groups = X[idx], y[idx], groups[idx]
         #X.shape == (5, 200, 1), y.shape == (5,) (e.g., [1,0,0,1,0])
@@ -250,37 +264,36 @@ class Astro1DCNN:
         print("Total segments:", X.shape[0], "Unique stars:", len(np.unique(groups)))
         return X, y, groups
 
-    # def declareModel(self):
-    #     w = self.window
-    
-    #     inputs = layers.Input(shape=(w,1))
-    #     x = layers.Conv1D(32, 11, padding='same', activation='relu')(inputs)
-    #     x = layers.BatchNormalization()(x)
-    #     x = layers.MaxPooling1D(2)(x)
-    #     x = layers.Conv1D(64, 7, padding='same', activation='relu')(x)
-    #     x = layers.BatchNormalization()(x)
-    #     x = layers.MaxPooling1D(2)(x)
-    #     x = layers.Conv1D(64, 5, padding='same', activation='relu', dilation_rate=2)(x)
-    #     x = layers.BatchNormalization()(x)
-    #     x = layers.MaxPooling1D(2)(x)
-    #     x = layers.Conv1D(64, 3, padding='same', activation='relu', dilation_rate=4)(x)
-    #     x = layers.GlobalAveragePooling1D()(x)
-    #     x = layers.Dropout(0.3)(x)
-    #     outputs = layers.Dense(1, activation='sigmoid')(x)
-
-    #     model = models.Model(inputs, outputs)
-    #     model.compile(
-    #         optimizer=tf.keras.optimizers.Adam(1e-3),
-    #         loss='binary_crossentropy',
-    #         metrics=[
-    #             tf.keras.metrics.AUC(curve="ROC", name="roc_auc"),
-    #             tf.keras.metrics.AUC(curve="PR",  name="pr_auc")
-    #         ]
-    #     )
-    #     return model
+    # ---- declareModel: accept channels ----
     def declareModel(self, channels=1):
-        cnn_nnet = CnnNNet(window=self.window, channels=channels)
-        return cnn_nnet.build_inception_resnet_1d(self.window, channels)
+        w = self.window
+        inputs = layers.Input(shape=(w, channels))
+        x = layers.Conv1D(32, 11, padding='same', activation='relu')(inputs)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling1D(2)(x)
+        x = layers.Conv1D(64, 7, padding='same', activation='relu')(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling1D(2)(x)
+        x = layers.Conv1D(64, 5, padding='same', activation='relu', dilation_rate=2)(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling1D(2)(x)
+        x = layers.Conv1D(64, 3, padding='same', activation='relu', dilation_rate=4)(x)
+        x = layers.GlobalAveragePooling1D()(x)
+        x = layers.Dropout(0.3)(x)
+        outputs = layers.Dense(1, activation='sigmoid')(x)
+        model = models.Model(inputs, outputs)
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(1e-4),
+            loss=tf.keras.losses.BinaryCrossentropy(),
+            metrics=[tf.keras.metrics.AUC(curve="ROC", name="roc_auc"),
+                    tf.keras.metrics.AUC(curve="PR",  name="pr_auc")],
+        )
+        return model
+
+
+    # def declareModel(self, channels=1):
+    #     cnn_nnet = CnnNNet(window=self.window, channels=channels)
+    #     return cnn_nnet.build_inception_resnet_1d(self.window, channels)
 
     # ---------- splitting ----------
     def stratified_group_train_val_test(self, y, groups, val_size=0.2, test_size=0.2, seed=42):
@@ -307,32 +320,45 @@ class Astro1DCNN:
 
     
     # ---------- train/eval ----------
+    # def trainModel(self, model, X, y, groups, epochs=20, batch_size=32):
+    #     train_idx, val_idx, test_idx = self.stratified_group_train_val_test(y, groups)
+    #     X_train, y_train = X[train_idx], y[train_idx]
+    #     X_val,   y_val   = X[val_idx],   y[val_idx]
+    #     X_test,  y_test  = X[test_idx],  y[test_idx]
+
+    #     cbs = [
+    #         tf.keras.callbacks.ReduceLROnPlateau(
+    #             monitor="val_pr_auc", mode="max", factor=0.5, patience=4, min_lr=1e-5, verbose=1
+    #         ),
+    #         tf.keras.callbacks.EarlyStopping(
+    #             monitor="val_pr_auc", mode="max", patience=10, restore_best_weights=True
+    #         ),
+    #         tf.keras.callbacks.ModelCheckpoint(
+    #             "best.keras", monitor="val_pr_auc", mode="max", save_best_only=True
+    #         ),
+    #     ]
+    #     history = model.fit(
+    #         X_train, y_train,
+    #         validation_data=(X_val, y_val),
+    #         epochs=60, batch_size=128,
+    #         class_weight={0:1.0, 1: max(1.0, (y_train==0).sum()/(y_train==1).sum()+1e-9)},
+    #         callbacks=cbs, verbose=1
+    #     )
+
+    #     return history, X_test, y_test
     def trainModel(self, model, X, y, groups, epochs=20, batch_size=32):
         train_idx, val_idx, test_idx = self.stratified_group_train_val_test(y, groups)
         X_train, y_train = X[train_idx], y[train_idx]
         X_val,   y_val   = X[val_idx],   y[val_idx]
         X_test,  y_test  = X[test_idx],  y[test_idx]
-
+       
         cbs = [
-            tf.keras.callbacks.ReduceLROnPlateau(
-                monitor="val_pr_auc", mode="max", factor=0.5, patience=4, min_lr=1e-5, verbose=1
-            ),
-            tf.keras.callbacks.EarlyStopping(
-                monitor="val_pr_auc", mode="max", patience=10, restore_best_weights=True
-            ),
-            tf.keras.callbacks.ModelCheckpoint(
-                "best.keras", monitor="val_pr_auc", mode="max", save_best_only=True
-            ),
+        tf.keras.callbacks.EarlyStopping(monitor="val_pr_auc", mode="max", patience=8, restore_best_weights=True),
+        tf.keras.callbacks.ModelCheckpoint("best_ref.keras", monitor="val_pr_auc", mode="max", save_best_only=True)
         ]
-        history = model.fit(
-            X_train, y_train,
-            validation_data=(X_val, y_val),
-            epochs=60, batch_size=128,
-            class_weight={0:1.0, 1: max(1.0, (y_train==0).sum()/(y_train==1).sum()+1e-9)},
-            callbacks=cbs, verbose=1
-        )
-
-        return history, X_test, y_test
+        #model = model(window=X.shape[1], channels=X.shape[2] if X.ndim==3 else 1)
+        hist = model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=60, batch_size=128, verbose=1, callbacks=cbs)
+        return hist, X_test, y_test,X_val, y_val
 
     def evaluateModel(self, model, X_test, y_test):
         res = model.evaluate(X_test, y_test, verbose=0)
