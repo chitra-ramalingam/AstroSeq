@@ -17,6 +17,7 @@ class CnnModel:
         print("Welcome to Exo-Planets")
 
     def runAstro1DCNN(self):
+        epoch = 30
         astro_cnn = Astro1DCNN(window=200, mission="TESS", author="SPOC")
         X, y, groups = astro_cnn.build_from_csv(
                         "CombinedExoplanetData.csv",
@@ -30,7 +31,7 @@ class CnnModel:
                     )
         model = astro_cnn.declareModel(channels=X.shape[2])   # <-- not 1 anymore
 
-        hist, X_test, y_test,X_val,y_val = astro_cnn.trainModel(model, X, y,groups=groups, epochs=60, batch_size=128)
+        hist, X_test, y_test,X_val,y_val = astro_cnn.trainModel(model, X, y,groups=groups, epochs=epoch, batch_size=128)
 
         astro_cnn.evaluateModel(model, X_test, y_test)
 

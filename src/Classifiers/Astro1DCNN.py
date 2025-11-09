@@ -346,7 +346,7 @@ class Astro1DCNN:
     #     )
 
     #     return history, X_test, y_test
-    def trainModel(self, model, X, y, groups, epochs=20, batch_size=32):
+    def trainModel(self, model, X, y, groups, epochs, batch_size=32):
         train_idx, val_idx, test_idx = self.stratified_group_train_val_test(y, groups)
         X_train, y_train = X[train_idx], y[train_idx]
         X_val,   y_val   = X[val_idx],   y[val_idx]
@@ -357,7 +357,7 @@ class Astro1DCNN:
         tf.keras.callbacks.ModelCheckpoint("best_ref.keras", monitor="val_pr_auc", mode="max", save_best_only=True)
         ]
         #model = model(window=X.shape[1], channels=X.shape[2] if X.ndim==3 else 1)
-        hist = model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=60, batch_size=128, verbose=1, callbacks=cbs)
+        hist = model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=epochs, batch_size=128, verbose=1, callbacks=cbs)
         return hist, X_test, y_test,X_val, y_val
 
     def evaluateModel(self, model, X_test, y_test):
