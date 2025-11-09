@@ -5,7 +5,10 @@ import tensorflow as tf
 from tensorflow.keras import layers, models
 from src.Classifiers.isolation_forest import IsolationForestScorer
 from src.Classifiers.CnnNNet import CnnNNet
-
+from sklearn.metrics import (
+    precision_recall_curve, average_precision_score, roc_auc_score,
+    accuracy_score, balanced_accuracy_score, f1_score, confusion_matrix, classification_report
+)
 
 class Astro1DCNN:
     def __init__(self, window=200, mission="TESS", author="SPOC"):
@@ -360,11 +363,70 @@ class Astro1DCNN:
         hist = model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=epochs, batch_size=128, verbose=1, callbacks=cbs)
         return hist, X_test, y_test,X_val, y_val
 
-    def evaluateModel(self, model, X_test, y_test):
-        res = model.evaluate(X_test, y_test, verbose=0)
-        names = model.metrics_names                 # e.g., ['loss','roc_auc','pr_auc','accuracy']
-        if not isinstance(res, (list, tuple)):
-            res = [res]
-        report = dict(zip(names, res))
-        print("Test -> " + " | ".join(f"{k}: {v:.4f}" for k, v in report.items()))
-        return report
+    def _choose_thr_from_val(self,y_val, p_val, mode="balanced_accuracy", target_recall=0.65):
+        pr, rc, th = precision_recall_curve(y_val, p_val)  # th aligns with pr[1:], rc[1:]
+        if th.size == 0: 
+            return 0.5
+        if mode == "f1":
+            f1s = (2*pr[1:]*rc[1:])/(pr[1:]+rc[1:]+1e-9)
+            return float(th[np.argmax(f1s)])
+        if mode == "recall":
+            i = int(np.argmin(np.abs(rc[1:] - target_recall)))
+            return float(th[i])
+        # default: balanced accuracy
+        scores = [balanced_accuracy_score(y_val, (p_val>=t).astype(int)) for t in th]
+        return float(th[int(np.argmax(scores))])
+
+    def evaluateModel(self, model, X_val, y_val, X_test, y_test, mode="balanced_accuracy"):
+        # ----- 1) Keras-compiled metrics on TEST (threshold-free) -----
+        try:
+            compile_report = model.evaluate(X_test, y_test, verbose=0, return_dict=True)
+        except TypeError:
+            # TF versions without return_dict
+            res = model.evaluate(X_test, y_test, verbose=0)
+            names = model.metrics_names
+            if not isinstance(res, (list, tuple)):
+                res = [res]
+            compile_report = {k: float(v) for k, v in zip(names, res)}
+        print("Test -> " + " | ".join(f"{k}: {v:.4f}" for k, v in compile_report.items()))
+
+        # ----- 2) Thresholded metrics (pick thr on VAL, apply to TEST) -----
+        p_val  = model.predict(X_val,  verbose=0).ravel()
+        p_test = model.predict(X_test, verbose=0).ravel()
+
+        thr = self._choose_thr_from_val(y_val, p_val, mode=mode)
+        yhat_val  = (p_val  >= thr).astype(int)
+        yhat_test = (p_test >= thr).astype(int)
+
+        # threshold-free summaries (nice to log)
+        val_roc = roc_auc_score(y_val, p_val)
+        val_ap  = average_precision_score(y_val, p_val)
+        tst_roc = roc_auc_score(y_test, p_test)
+        tst_ap  = average_precision_score(y_test, p_test)
+        print(f"[VAL]  ROC-AUC={val_roc:.3f} | PR-AUC={val_ap:.3f}")
+        print(f"[TEST] ROC-AUC={tst_roc:.3f} | PR-AUC={tst_ap:.3f}")
+
+        # thresholded summaries
+        print(f"Chosen threshold ({mode} on VAL): {thr:.4f}")
+        print("[VAL]  acc:", accuracy_score(y_val,yhat_val),
+            "bal_acc:", balanced_accuracy_score(y_val,yhat_val),
+            "f1:", f1_score(y_val,yhat_val))
+        print(confusion_matrix(y_val,yhat_val))
+        print(classification_report(y_val,yhat_val, digits=3))
+
+        print("[TEST] acc:", accuracy_score(y_test,yhat_test),
+            "bal_acc:", balanced_accuracy_score(y_test,yhat_test),
+            "f1:", f1_score(y_test,yhat_test))
+        print(confusion_matrix(y_test,yhat_test))
+        print(classification_report(y_test,yhat_test, digits=3))
+
+        return {
+            "compile_report": compile_report,
+            "threshold": thr,
+            "val":  {"roc_auc": float(val_roc), "pr_auc": float(val_ap)},
+            "test": {"roc_auc": float(tst_roc), "pr_auc": float(tst_ap),
+                    "acc": float(accuracy_score(y_test,yhat_test)),
+                    "bal_acc": float(balanced_accuracy_score(y_test,yhat_test)),
+                    "f1": float(f1_score(y_test,yhat_test))}
+        }
+

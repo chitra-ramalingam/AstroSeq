@@ -33,12 +33,12 @@ class CnnModel:
 
         hist, X_test, y_test,X_val,y_val = astro_cnn.trainModel(model, X, y,groups=groups, epochs=epoch, batch_size=128)
 
-        astro_cnn.evaluateModel(model, X_test, y_test)
+        astro_cnn.evaluateModel(model,X_val, y_val, X_test, y_test, mode="balanced_accuracy")
 
 
         plots = CNNPlots()
 
-        # after training:
+        # after training: doesnt work on threshold, uses default 0.5
         plots.plot_history(hist)
 
         # curves
