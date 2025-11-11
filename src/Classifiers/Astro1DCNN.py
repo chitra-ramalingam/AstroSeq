@@ -17,7 +17,25 @@ class Astro1DCNN:
         self.author = author
         self.op_threshold = 0.5  # will overwrite after evaluateModel
 
+    def set_threshold(self, thr: float):
+        """Set deployment threshold chosen on VAL."""
+        self.op_threshold = float(thr)
 
+    def _aggregate_probs(self, probs, mode="topk_mean", k=3):
+        """
+        Turn per-seg probabilities -> one star score.
+        mode='topk_mean' (default): mean of top-k segment probs.
+        Alternatives: 'max', 'mean'.
+        """
+        p = np.asarray(probs).ravel()
+        if p.size == 0: return float("nan")
+        if mode == "max":
+            return float(p.max())
+        if mode == "mean":
+            return float(p.mean())
+        k = max(1, min(k, p.size))
+        topk = np.partition(p, -k)[-k:]
+        return float(topk.mean())
     # ---------- helpers ----------
     def _intish(self, x):
         try:
@@ -80,7 +98,7 @@ class Astro1DCNN:
         try:
             target, pref = self._row_to_target_and_mission(row)
             if not target:
-                return None, None, None
+                return None, None, None, None
             print("Fetching from lightcurve:", target)
             missions_try = [pref] if pref else []
             for m in ["TESS", "Kepler", "K2"]:
@@ -105,11 +123,11 @@ class Astro1DCNN:
                 fl_raw = lc.flux.value.astype(np.float32)
                 flux_flat = lc_flat.flux.value.astype(np.float32)
                 flux = np.stack([fl_raw, flux_flat], axis=-1)  # (T, 2)
-                return time, flux, m
+                return time, flux, m, target
 
-            return None, None, None
+            return None, None, None, None
         except Exception:
-            return None, None, None
+            return None, None, None, None
 
     # ---------- preprocessing ----------
     # ---- segment_with_idx ----
@@ -167,9 +185,9 @@ class Astro1DCNN:
         weights_all = []
         pos_groups, neg_groups = set(), set()
         skipped = dict(no_id=0, dl_fail=0, empty=0, no_ephem=0)
-
+        cache = {}
         for _, row in df.iterrows():
-            time, flux, mission = self.fetch_flux_row(row, use_all=use_all, max_files=max_files, any_author=any_author)
+            time, flux, mission,t0 = self.fetch_flux_row(row, use_all=use_all, max_files=max_files, any_author=any_author)
             flux = np.asarray(flux, dtype=np.float32)
             if flux.ndim == 1: 
                 flux = flux[:, None]  # (T, C)
@@ -204,7 +222,8 @@ class Astro1DCNN:
             if len(segs) == 0:
                 skipped["empty"] += 1
                 continue
-
+            cache[t0] = {"segs": segs, "mission": mission, "n_segments": int(segs.shape[0])}
+        
               # ephemeris
             t0, period, dur_h, timesys = self._get_ephemeris(row)
             # Ensure ephemeris on same time system as LC
@@ -260,7 +279,7 @@ class Astro1DCNN:
         print("Stars with positives:", len(pos_groups), "Stars w/o positives:", len(neg_groups))
         print("Skipped:", skipped)
         print("Total segments:", X.shape[0], "Unique stars:", len(np.unique(groups)))
-        return X, y, groups, sample_w     
+        return X, y, groups, sample_w , cache    
         
     # ---- declareModel: accept channels ----
     def declareModel(self, channels=1):
@@ -433,4 +452,39 @@ class Astro1DCNN:
                     "bal_acc": float(balanced_accuracy_score(y_test,yhat_test)),
                     "f1": float(f1_score(y_test,yhat_test))}
         }
+    
+    def predict_from_cache(self, model, cache, agg="topk_mean", k=3, threshold=None):
+        """
+        Predict TRANSIT/NO_TRANSIT for each target in a precomputed cache.
+        Returns a DataFrame; prints star-by-star lines.
+        """
+        out = []
+        thr = self.op_threshold if threshold is None else float(threshold)
+        for tid, entry in cache.items():
+            segs = entry["segs"]
+            probs = model.predict(segs, verbose=0).ravel()
+            score = self._aggregate_probs(probs, mode=agg, k=k)
+            label = "TRANSIT" if score >= thr else "NO_TRANSIT"
+            out.append({"target_id": tid, "mission": entry.get("mission"),
+                        "label": label, "score": score, "n_segments": entry["n_segments"]})
+            print(f"{tid}\t{label}\tscore={score:.3f}\tsegs={entry['n_segments']}")
+        return pd.DataFrame(out)
+    
+    def star_level_from_dataset(self, model, X_subset, groups_subset, agg="topk_mean", k=3, threshold=None):
+        """
+        Aggregate per-segment probs into one score per star for a dataset subset.
+        """
+        import numpy as np, pandas as pd
+        thr = self.op_threshold if threshold is None else float(threshold)
+        out = []
+        uniq = np.unique(groups_subset)
+        for g in uniq:
+            mask = (groups_subset == g)
+            segs = X_subset[mask]
+            probs = model.predict(segs, verbose=0).ravel()
+            score = self._aggregate_probs(probs, mode=agg, k=k)
+            label = "TRANSIT" if score >= thr else "NO_TRANSIT"
+            out.append({"target_id": g, "label": label, "score": score, "n_segments": int(mask.sum())})
+            print(f"{g}\t{label}\tscore={score:.3f}\tsegs={int(mask.sum())}")
+        return pd.DataFrame(out)
 
