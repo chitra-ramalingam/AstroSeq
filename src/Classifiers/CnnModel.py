@@ -19,7 +19,7 @@ class CnnModel:
     def runAstro1DCNN(self):
         epoch = 30
         astro_cnn = Astro1DCNN(window=200, mission="TESS", author="SPOC")
-        X, y, groups = astro_cnn.build_from_csv(
+        X, y, groups, sample_w = astro_cnn.build_from_csv(
                         "CombinedExoplanetData.csv",
                         min_pos_groups=12,     # stars with at least one positive segment
                         min_neg_groups=12,     # stars with no positive segments (or no ephemeris)
@@ -31,7 +31,12 @@ class CnnModel:
                     )
         model = astro_cnn.declareModel(channels=X.shape[2])   # <-- not 1 anymore
 
-        hist, X_test, y_test,X_val,y_val = astro_cnn.trainModel(model, X, y,groups=groups, epochs=epoch, batch_size=128)
+        hist, X_test, y_test,X_val,y_val = astro_cnn.trainModel(model,
+                                                                 X=X,
+                                                                 y=y,
+                                                                 groups=groups,
+                                                                 sample_w=sample_w,
+                                                                epochs=epoch, batch_size=128)
 
         astro_cnn.evaluateModel(model,X_val, y_val, X_test, y_test, mode="balanced_accuracy")
 

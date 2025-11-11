@@ -15,6 +15,8 @@ class Astro1DCNN:
         self.window = window
         self.mission = mission
         self.author = author
+        self.op_threshold = 0.5  # will overwrite after evaluateModel
+
 
     # ---------- helpers ----------
     def _intish(self, x):
@@ -135,12 +137,18 @@ class Astro1DCNN:
         y = []
         for i0, i1 in spans:
             t_start, t_end = time[i0], time[i1-1]
-            mid = 0.5*(t_start + t_end)
-            k = np.round((mid - t0) / period)
-            t_transit = t0 + k*period
-            overlaps = (t_transit >= t_start - 1.5*dur_d) and (t_transit <= t_end + 1.5*dur_d)
-            y.append(1 if overlaps else 0)
-        return np.array(y, dtype=int)
+            # search all transits that could intersect this span
+            k0 = int(np.floor((t_start - t0) / period)) - 1
+            k1 = int(np.ceil ((t_end   - t0) / period)) + 1
+            hit = False
+            for k in range(k0, k1 + 1):
+                t_ctr = t0 + k * period
+                # mark positive if the +/- 1.5*duration window touches [t_start, t_end]
+                if (t_ctr + 1.5*dur_d) >= t_start and (t_ctr - 1.5*dur_d) <= t_end:
+                    hit = True
+                    break
+            y.append(1 if hit else 0)
+        return np.array(y, dtype=int)       
 
     # ---------- dataset builder ----------
     def build_from_csv(self, csv_path,
@@ -156,6 +164,7 @@ class Astro1DCNN:
         df = df.sample(frac=1.0, random_state=42)  # shuffle
 
         segs_all, labels_all, groups_all = [], [], []
+        weights_all = []
         pos_groups, neg_groups = set(), set()
         skipped = dict(no_id=0, dl_fail=0, empty=0, no_ephem=0)
 
@@ -196,77 +205,63 @@ class Astro1DCNN:
                 skipped["empty"] += 1
                 continue
 
-            tt = self._row_to_target_and_mission(row)[0]
-            # ephemeris
+              # ephemeris
             t0, period, dur_h, timesys = self._get_ephemeris(row)
             # Ensure ephemeris on same time system as LC
-            if t0 is not None:
-                if mission in ["Kepler","K2"] and timesys != "BKJD":
-                    # If we somehow got BTJD ephemeris for Kepler (rare), convert: BTJD->BJD add 2457000, then -2454833
-                    t0 = t0 + 2457000.0 - 2454833.0
-                if mission == "TESS" and timesys != "BTJD":
-                    # If we somehow got BKJD ephemeris for TESS (rare), convert: BKJD->BJD add 2454833, then -2457000
-                    t0 = t0 + 2454833.0 - 2457000.0
-
             if t0 is None or period is None:
-                # No ephemeris: treat as NEGATIVE star (all 0s)
+                # keep as negatives but mark them LOW CONFIDENCE
                 y_seg = np.zeros(len(segs), dtype=int)
                 star_label = 0
                 neg_groups.add(self._row_to_target_and_mission(row)[0])
+                w_seg = np.full(len(segs), 0.3, dtype=np.float32)   # <— NEW: weak weight
             else:
-                # Label by overlap
-                y_seg = self.label_by_ephem(time, spans, t0, period, dur_h=dur_h, time_system=("BTJD" if mission=="TESS" else "BKJD"))
-                # Decide group label: positive if any positive segment
+                y_seg = self.label_by_ephem(time, spans, t0, period, dur_h=dur_h,
+                                            time_system=("BTJD" if mission=="TESS" else "BKJD"))
                 star_label = int((y_seg == 1).any())
-                if star_label == 1:
-                    pos_groups.add(self._row_to_target_and_mission(row)[0])
-                else:
-                    neg_groups.add(self._row_to_target_and_mission(row)[0])
+                (pos_groups if star_label==1 else neg_groups).add(self._row_to_target_and_mission(row)[0])
+                # confident labels: full weight
+                w_seg = np.ones(len(segs), dtype=np.float32)        # <— NEW
 
-            # cap per star
-            target_id = self._row_to_target_and_mission(row)[0]
+            # cap per star (keep weights in sync!)
             if per_star_cap is not None and len(segs) > per_star_cap:
-                # segs: all segments for this star,y_seg: labels for those segments (1 = transit overlap, 0 = off-transit)
-                # spans: index ranges of each segment in the original light curve
-
-                pos_idx = np.where(y_seg == 1)[0]
-                neg_idx = np.where(y_seg == 0)[0]
+                pos_idx = np.where(y_seg == 1)[0];  neg_idx = np.where(y_seg == 0)[0]
                 take_pos = min(len(pos_idx), per_star_cap // 2)
                 take_neg = min(len(neg_idx), per_star_cap - take_pos)
-                # Randomly sample those indices without replacement
                 choose = np.concatenate([
                     np.random.default_rng(42).choice(pos_idx, size=take_pos, replace=False) if take_pos>0 else np.array([], int),
                     np.random.default_rng(43).choice(neg_idx, size=take_neg, replace=False) if take_neg>0 else np.array([], int),
                 ])
-                segs = segs[choose]
-                y_seg = y_seg[choose]
-                spans = spans[choose]
+                segs   = segs[choose]
+                y_seg  = y_seg[choose]
+                w_seg  = w_seg[choose]                                 # <— NEW
+                spans  = spans[choose]
 
-            # append
-            segs_all.append(segs)
-            labels_all.append(y_seg.astype(np.int32))
-            groups_all.append(np.array([target_id]*len(segs), dtype=object))
+            # append (keep channels!)
+                segs_all.append(segs)
+                labels_all.append(y_seg.astype(np.int32))
+                groups_all.append(np.array([self._row_to_target_and_mission(row)[0]]*len(segs), dtype=object))
+                weights_all.append(w_seg)                                   # <— NEW
 
-            # stop when we have enough groups on both sides
-            if len(pos_groups) >= min_pos_groups and len(neg_groups) >= min_neg_groups:
-                break
+                if len(pos_groups) >= min_pos_groups and len(neg_groups) >= min_neg_groups:
+                    break
 
-        # final arrays
-        if not segs_all:
-            raise RuntimeError("No usable data collected.")
-        X = np.vstack(segs_all).astype(np.float32)   # shape: (N, window, C)
+            if not segs_all:
+                raise RuntimeError("No usable data collected.")
+
+        X = np.vstack(segs_all).astype(np.float32)          # (N, window, C)
         y = np.concatenate(labels_all).astype(np.int32)
         groups = np.concatenate(groups_all)
+        sample_w = np.concatenate(weights_all).astype(np.float32)       # <— NEW
+
         idx = np.arange(len(y)); np.random.shuffle(idx)
-        X, y, groups = X[idx], y[idx], groups[idx]
-        #X.shape == (5, 200, 1), y.shape == (5,) (e.g., [1,0,0,1,0])
-        # #groups.shape == (5,) (e.g., ['TIC A','TIC A','TIC A','TIC B','TIC B'])
+        X, y, groups, sample_w = X[idx], y[idx], groups[idx], sample_w[idx]
+
         print("Segments per class:", dict(zip(*np.unique(y, return_counts=True))))
         print("Stars with positives:", len(pos_groups), "Stars w/o positives:", len(neg_groups))
         print("Skipped:", skipped)
         print("Total segments:", X.shape[0], "Unique stars:", len(np.unique(groups)))
-        return X, y, groups
-
+        return X, y, groups, sample_w     
+        
     # ---- declareModel: accept channels ----
     def declareModel(self, channels=1):
         w = self.window
@@ -349,19 +344,28 @@ class Astro1DCNN:
     #     )
 
     #     return history, X_test, y_test
-    def trainModel(self, model, X, y, groups, epochs, batch_size=32):
+    def trainModel(self, model, X, y, groups, sample_w, epochs=20, batch_size=32):
         train_idx, val_idx, test_idx = self.stratified_group_train_val_test(y, groups)
-        X_train, y_train = X[train_idx], y[train_idx]
-        X_val,   y_val   = X[val_idx],   y[val_idx]
-        X_test,  y_test  = X[test_idx],  y[test_idx]
-       
+        X_train, y_train, w_train = X[train_idx], y[train_idx], sample_w[train_idx]
+        X_val,   y_val,   w_val   = X[val_idx],   y[val_idx],   sample_w[val_idx]
+        X_test,  y_test           = X[test_idx],  y[test_idx]
+
         cbs = [
-        tf.keras.callbacks.EarlyStopping(monitor="val_pr_auc", mode="max", patience=8, restore_best_weights=True),
-        tf.keras.callbacks.ModelCheckpoint("best_ref.keras", monitor="val_pr_auc", mode="max", save_best_only=True)
+            tf.keras.callbacks.EarlyStopping(monitor="val_pr_auc", mode="max", patience=8, restore_best_weights=True),
+            tf.keras.callbacks.ModelCheckpoint("best_ref.keras", monitor="val_pr_auc", mode="max", save_best_only=True),
+            tf.keras.callbacks.ReduceLROnPlateau(monitor="val_pr_auc", mode="max", factor=0.5, patience=3, min_lr=1e-5),
         ]
-        #model = model(window=X.shape[1], channels=X.shape[2] if X.ndim==3 else 1)
-        hist = model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=epochs, batch_size=128, verbose=1, callbacks=cbs)
-        return hist, X_test, y_test,X_val, y_val
+
+        history = model.fit(
+            X_train, y_train,
+            sample_weight=w_train,                      
+            validation_data=(X_val, y_val, w_val),      
+            epochs=epochs, batch_size=batch_size,
+            # drop class_weight when using sample_weight, or multiply into w_train if you want both
+            callbacks=cbs, verbose=1
+        )
+        return history, X_test, y_test, X_val, y_val
+
 
     def _choose_thr_from_val(self,y_val, p_val, mode="balanced_accuracy", target_recall=0.65):
         pr, rc, th = precision_recall_curve(y_val, p_val)  # th aligns with pr[1:], rc[1:]
