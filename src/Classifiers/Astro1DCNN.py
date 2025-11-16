@@ -5,6 +5,7 @@ import tensorflow as tf
 from tensorflow.keras import layers, models
 from src.Classifiers.isolation_forest import IsolationForestScorer
 from src.Classifiers.CnnNNet import CnnNNet
+from src.Classifiers.CommonHelper import CommonHelper
 from sklearn.metrics import (
     precision_recall_curve, average_precision_score, roc_auc_score,
     accuracy_score, balanced_accuracy_score, f1_score, confusion_matrix, classification_report
@@ -15,6 +16,8 @@ class Astro1DCNN:
         self.window = window
         self.mission = mission
         self.author = author
+        self.commonHelper = CommonHelper()
+
         self.op_threshold = 0.5  # will overwrite after evaluateModel
 
     def set_threshold(self, thr: float):
@@ -37,39 +40,8 @@ class Astro1DCNN:
         topk = np.partition(p, -k)[-k:]
         return float(topk.mean())
     # ---------- helpers ----------
-    def _intish(self, x):
-        try:
-            return int(float(x))
-        except Exception:
-            return None
-
-    def _row_to_target_and_mission(self, row):
-        # Kepler (KIC)
-        for k in ["kepid", "KIC", "kic"]:
-            if k in row and pd.notna(row[k]):
-                n = self._intish(row[k])
-                if n is not None:
-                    return f"KIC {n}", "Kepler"
-        # K2 (EPIC)
-        for k in ["epic", "EPIC"]:
-            if k in row and pd.notna(row[k]):
-                n = self._intish(row[k])
-                if n is not None:
-                    return f"EPIC {n}", "K2"
-        # TESS (TIC)
-        for k in ["tid", "TIC ID", "tic_id", "tic"]:
-            if k in row and pd.notna(row[k]):
-                n = self._intish(row[k])
-                if n is not None:
-                    return f"TIC {n}", "TESS"
-        # TOI / names
-        for k in ["toi", "TOI"]:
-            if k in row and pd.notna(row[k]):
-                return f"TOI {str(row[k]).strip()}", "TESS"
-        if "hostname" in row and pd.notna(row["hostname"]):
-            return str(row["hostname"]).strip(), None
-        return None, None
-
+    
+    
     def _get_ephemeris(self, row):
         """Return (t0_series_units, period_days, dur_hours, time_system) or (None,...)."""
         # Kepler/K2 KOI ephemeris (already BKJD)
@@ -93,60 +65,10 @@ class Astro1DCNN:
         return None, None, None, None
 
     # ---------- data IO ----------
-    def fetch_flux_row(self, row, use_all=True, max_files=4, any_author=True):
-        """Return (time, flux, mission) on success; else (None, None, None)."""
-        try:
-            target, pref = self._row_to_target_and_mission(row)
-            if not target:
-                return None, None, None, None
-            print("Fetching from lightcurve:", target)
-            missions_try = [pref] if pref else []
-            for m in ["TESS", "Kepler", "K2"]:
-                if m and m not in missions_try:
-                    missions_try.append(m)
-
-            for m in missions_try:
-                sr = lk.search_lightcurve(target, mission=m, author=None if any_author else self.author)
-                if len(sr) == 0:
-                    continue
-                if use_all:
-                    lcc = sr[:max_files].download_all()
-                    lc = lcc.stitch().remove_nans().normalize()
-                else:
-                    lc = sr[0].download().remove_nans().normalize()
-                try:
-                    lc_flat = lc.flatten(window_length=201, polyorder=2)
-                except Exception:
-                    lc_flat = lc.copy()
-
-                time = lc.time.value.astype(np.float64)
-                fl_raw = lc.flux.value.astype(np.float32)
-                flux_flat = lc_flat.flux.value.astype(np.float32)
-                flux = np.stack([fl_raw, flux_flat], axis=-1)  # (T, 2)
-                return time, flux, m, target
-
-            return None, None, None, None
-        except Exception:
-            return None, None, None, None
-
+    
     # ---------- preprocessing ----------
     # ---- segment_with_idx ----
-    def segment_with_idx(self, flux, w=None, stride=None):
-        if flux.ndim == 1: flux = flux[:, None]
-        T, C = flux.shape
-        if w is None: w = self.window
-        if stride is None: stride = max(1, w // 4)
-        if w <= 0 or T < w:
-            return np.empty((0, w, C), np.float32), np.empty((0, 2), int)
-
-        segs, spans = [], []
-        for i in range(0, T - w + 1, stride):
-            seg = flux[i:i+w].astype(np.float32)          # (w, C)
-            seg = seg - np.median(seg, axis=0, keepdims=True)  # center only; keep amplitude
-            segs.append(seg)
-            spans.append((i, i+w))
-        return np.asarray(segs, np.float32), np.asarray(spans, int)
-
+    
     def label_by_ephem(self, time, spans, t0, period, dur_h=6.0, time_system="BTJD"):
         """Label 1 if span overlaps a predicted transit window; else 0."""
         if t0 is None or period is None or len(spans) == 0:
@@ -187,7 +109,7 @@ class Astro1DCNN:
         skipped = dict(no_id=0, dl_fail=0, empty=0, no_ephem=0)
         cache = {}
         for _, row in df.iterrows():
-            time, flux, mission,t0 = self.fetch_flux_row(row, use_all=use_all, max_files=max_files, any_author=any_author)
+            time, flux, mission,t0 = self.commonHelper.fetch_flux_row(row, use_all=use_all, max_files=max_files, any_author=any_author)
             flux = np.asarray(flux, dtype=np.float32)
             if flux.ndim == 1: 
                 flux = flux[:, None]  # (T, C)
@@ -205,7 +127,7 @@ class Astro1DCNN:
 
             if time is None:
                 # figure out if target missing or download failed
-                target, _ = self._row_to_target_and_mission(row)
+                target, _ = self.commonHelper.row_to_target_and_mission(row)
                 if not target: skipped["no_id"] += 1
                 else:          skipped["dl_fail"] += 1
                 continue
@@ -218,7 +140,7 @@ class Astro1DCNN:
 
 
             # segment
-            segs, spans = self.segment_with_idx(flux, w=self.window, stride=stride)
+            segs, spans = self.commonHelper.segment_with_idx(flux, w=self.window, stride=stride)
             if len(segs) == 0:
                 skipped["empty"] += 1
                 continue
@@ -231,13 +153,13 @@ class Astro1DCNN:
                 # keep as negatives but mark them LOW CONFIDENCE
                 y_seg = np.zeros(len(segs), dtype=int)
                 star_label = 0
-                neg_groups.add(self._row_to_target_and_mission(row)[0])
+                neg_groups.add(self.commonHelper.row_to_target_and_mission(row)[0])
                 w_seg = np.full(len(segs), 0.3, dtype=np.float32)   # <— NEW: weak weight
             else:
                 y_seg = self.label_by_ephem(time, spans, t0, period, dur_h=dur_h,
                                             time_system=("BTJD" if mission=="TESS" else "BKJD"))
                 star_label = int((y_seg == 1).any())
-                (pos_groups if star_label==1 else neg_groups).add(self._row_to_target_and_mission(row)[0])
+                (pos_groups if star_label==1 else neg_groups).add(self.commonHelper.row_to_target_and_mission(row)[0])
                 # confident labels: full weight
                 w_seg = np.ones(len(segs), dtype=np.float32)        # <— NEW
 
@@ -258,7 +180,7 @@ class Astro1DCNN:
             # append (keep channels!)
                 segs_all.append(segs)
                 labels_all.append(y_seg.astype(np.int32))
-                groups_all.append(np.array([self._row_to_target_and_mission(row)[0]]*len(segs), dtype=object))
+                groups_all.append(np.array([self.commonHelper.row_to_target_and_mission(row)[0]]*len(segs), dtype=object))
                 weights_all.append(w_seg)                                   # <— NEW
 
                 if len(pos_groups) >= min_pos_groups and len(neg_groups) >= min_neg_groups:
@@ -335,34 +257,6 @@ class Astro1DCNN:
         def idx_for(gs): return np.where(np.isin(groups, gs))[0]
         return idx_for(train_groups), idx_for(val_groups), idx_for(test_groups)
 
-    
-    # ---------- train/eval ----------
-    # def trainModel(self, model, X, y, groups, epochs=20, batch_size=32):
-    #     train_idx, val_idx, test_idx = self.stratified_group_train_val_test(y, groups)
-    #     X_train, y_train = X[train_idx], y[train_idx]
-    #     X_val,   y_val   = X[val_idx],   y[val_idx]
-    #     X_test,  y_test  = X[test_idx],  y[test_idx]
-
-    #     cbs = [
-    #         tf.keras.callbacks.ReduceLROnPlateau(
-    #             monitor="val_pr_auc", mode="max", factor=0.5, patience=4, min_lr=1e-5, verbose=1
-    #         ),
-    #         tf.keras.callbacks.EarlyStopping(
-    #             monitor="val_pr_auc", mode="max", patience=10, restore_best_weights=True
-    #         ),
-    #         tf.keras.callbacks.ModelCheckpoint(
-    #             "best.keras", monitor="val_pr_auc", mode="max", save_best_only=True
-    #         ),
-    #     ]
-    #     history = model.fit(
-    #         X_train, y_train,
-    #         validation_data=(X_val, y_val),
-    #         epochs=60, batch_size=128,
-    #         class_weight={0:1.0, 1: max(1.0, (y_train==0).sum()/(y_train==1).sum()+1e-9)},
-    #         callbacks=cbs, verbose=1
-    #     )
-
-    #     return history, X_test, y_test
     def trainModel(self, model, X, y, groups, sample_w, epochs=20, batch_size=32):
         train_idx, val_idx, test_idx = self.stratified_group_train_val_test(y, groups)
         X_train, y_train, w_train = X[train_idx], y[train_idx], sample_w[train_idx]
@@ -454,10 +348,6 @@ class Astro1DCNN:
         }
     
     def predict_from_cache(self, model, cache, agg="topk_mean", k=3, threshold=None):
-        """
-        Predict TRANSIT/NO_TRANSIT for each target in a precomputed cache.
-        Returns a DataFrame; prints star-by-star lines.
-        """
         out = []
         thr = self.op_threshold if threshold is None else float(threshold)
         for tid, entry in cache.items():
@@ -471,10 +361,6 @@ class Astro1DCNN:
         return pd.DataFrame(out)
     
     def star_level_from_dataset(self, model, X_subset, groups_subset, agg="topk_mean", k=3, threshold=None):
-        """
-        Aggregate per-segment probs into one score per star for a dataset subset.
-        """
-        import numpy as np, pandas as pd
         thr = self.op_threshold if threshold is None else float(threshold)
         out = []
         uniq = np.unique(groups_subset)

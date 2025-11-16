@@ -49,5 +49,12 @@ Generalization: TEST AUC 0.645 / PR-AUC 0.672 > VAL (0.604/0.612). That’s fine
 
 Did nothing, as early stopping kicked in, and the it took Epoch as 20. Can set the patience to high 999 but ineffective i think.
 
+# AUC
+AUC is threshold-free and not a probability. True positives tend to score higher.
+
+
+# Starwise 1DCnn 
+Takes a long time to calculate the 1D Cnn for each star. This uses the already trained set in best_ref.keras. 
+But it takes a long time to download from lightkurve. Trying to cache it. Memory could upto 20GB.
 
 

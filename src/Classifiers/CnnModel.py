@@ -1,6 +1,11 @@
 from src.Classifiers.SimpleLightCurve import SimpleLightCurve
 from src.Classifiers.Astro1DCNN import Astro1DCNN
 from src.Classifiers.CNNPlots import CNNPlots
+from src.Classifiers.Starwise1DCnn import Starwise1DCnn
+from src.Classifiers.isolation_forest import IsolationForestScorer
+from src.Classifiers.CnnNNet import CnnNNet
+from src.Classifiers.CommonHelper import CommonHelper
+import tensorflow as tf
 import numpy as np
 class CnnModel:
     def __init__(self):
@@ -15,6 +20,15 @@ class CnnModel:
         slC.evaluateModel(model, trainRespones[1], trainRespones[2])  # Dummy labels for illustration
         slC.plotAll(trainRespones[0])
         print("Welcome to Exo-Planets")
+
+    def runStarbased1DCNN(self):
+       
+        model = Starwise1DCnn( window=200, stride=50, top_k=5)
+        model.model = tf.keras.models.load_model("best_ref.keras")
+
+        df_stars, seg_info = model.predict_stars_from_csv("Cut_CombinedExoplanetData.csv", return_segments=True)
+        print(df_stars.head())
+
 
     def runAstro1DCNN(self):
         epoch = 30

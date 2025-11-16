@@ -3,3 +3,5 @@ src/Classifiers/__pycache__/Astro1DCNN.cpython-313.pyc
 src/Classifiers/__pycache__/CnnModel.cpython-313.pyc
 src/Classifiers/__pycache__/CNNPlots.cpython-313.pyc
 src/Classifiers/__pycache__/SimpleLightCurve.cpython-313.pyc
+src/Classifiers/__pycache__/Starwise1DCnn.cpython-313.pyc
+src/Classifiers/__pycache__/CommonHelper.cpython-313.pyc
