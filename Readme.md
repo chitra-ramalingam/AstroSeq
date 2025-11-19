@@ -54,7 +54,12 @@ AUC is threshold-free and not a probability. True positives tend to score higher
 
 
 # Starwise 1DCnn 
-Takes a long time to calculate the 1D Cnn for each star. This uses the already trained set in best_ref.keras. 
+Takes a long time to calculate the 1D Cnn for each star. The reason is the Astro1DCNN takes 20 positives and 20 negatives and caps the segments. Starwise takes all segments of the star into consideration. This uses the already trained set in best_ref.keras. 
 But it takes a long time to download from lightkurve. Trying to cache it. Memory could upto 20GB.
+
+NNet
+channels = how many features per time step (e.g. 1 = just flux, 2 = raw + flattened).
+64 Enough filters to learn a variety of shapes (different transit depths, slopes, noise patterns) without exploding the model size.
+Slightly wide local view: captures the shape of a dip (ingress, bottom, egress), not just individual spikes.
 
 

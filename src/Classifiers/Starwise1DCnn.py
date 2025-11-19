@@ -1,16 +1,18 @@
 import numpy as np
 import pandas as pd
+import os
 from src.Classifiers.CommonHelper import CommonHelper
 from src.Classifiers.CnnNNet import CnnNNet
 
 class Starwise1DCnn(CnnNNet):
-    def __init__(self, window=201, stride=None, top_k=5):
+    def __init__(self, window=201, stride=None, top_k=5, cache_dir="lc_cache"):
         super().__init__(window=window, channels=1)
         self.commonHelper = CommonHelper()
         self.window = window
-        self.net = CnnNNet(window=window, channels=1)
         self.stride = stride or window // 4
         self.top_k = top_k
+        self.cache_dir = cache_dir
+        os.makedirs(self.cache_dir, exist_ok=True)
 
     # --- core utils ---
 
@@ -22,11 +24,75 @@ class Starwise1DCnn(CnnNNet):
         mad = np.median(np.abs(flux - med), axis=0, keepdims=True) + 1e-6
         flux_norm = (flux - med) / mad
         return flux_norm
+    
+    def _cache_path_for_target(self, target):
+        # e.g. "TIC 123456" -> "TIC_123456.npz"
+        safe_target = str(target).replace(" ", "_").replace("/", "_")
+        return os.path.join(self.cache_dir, f"{safe_target}.npz")
 
     def _segment_flux(self, flux):
         segs, spans = self.commonHelper.segment_with_idx(flux, w=self.window, stride=self.stride)
         # segs: (num_segments, window), or (num_segments, window, C)
         return segs, spans
+    
+    def _fetch_with_cache(self, row, use_all=True, max_files=4, any_author=True):
+        target, _ = self.commonHelper.row_to_target_and_mission(row)
+        if not target:
+            return None, None, None, None
+
+        cache_path = self._cache_path_for_target(target)
+
+        # 1) Try to load from cache
+        if os.path.exists(cache_path):
+            data = np.load(cache_path, allow_pickle=True)
+
+            # If we previously marked this as empty, bail fast
+            if "empty" in data and bool(data["empty"]):
+                print("Cached EMPTY star, skipping:", target)
+                return None, None, None, target
+
+            print("Loading from cache:", target)
+            time   = data["time"]
+            flux   = data["flux"]
+            mission = str(data["mission"])
+            target  = str(data["target"])
+            return time, flux, mission, target
+
+        # 2) Fetch from lightkurve / MAST
+        time, flux, mission, target = self.commonHelper.fetch_flux_row(
+            row,
+            use_all=use_all,
+            max_files=max_files,
+            any_author=any_author,
+        )
+
+        # If fetch failed, cache that this star is empty/useless
+        if time is None or flux is None:
+            try:
+                np.savez(
+                    cache_path,
+                    empty=np.array(True),
+                    target=np.array(target if target is not None else "UNKNOWN"),
+                    mission=np.array(mission if mission is not None else "UNKNOWN"),
+                )
+            except Exception:
+                pass
+            return None, None, None, target
+
+        # Fetch succeeded → cache the full data, with empty=False
+        try:
+            np.savez(
+                cache_path,
+                time=np.asarray(time),
+                flux=np.asarray(flux),
+                mission=np.array(mission),
+                target=np.array(target),
+                empty=np.array(False),
+            )
+        except Exception:
+            pass
+
+        return time, flux, mission, target
 
     def _aggregate_segments(self, p_seg):
         """Star-level score from segment probabilities."""
@@ -57,17 +123,16 @@ class Starwise1DCnn(CnnNNet):
         segments_info = {}  # optional detailed outputs
 
         for _, row in df.iterrows():
-            time, flux, mission, target = self.commonHelper.fetch_flux_row(
+            time, flux, mission, target = self._fetch_with_cache(
                 row,
                 use_all=use_all,
                 max_files=max_files,
-                any_author=any_author
+                any_author=any_author,
             )
 
-            if flux is None or flux is None:
+            if flux is None or time is None:
                 continue
 
-            # Normalize like training
             flux = np.asarray(flux, dtype=np.float32)
             if flux.ndim == 1:
                 flux = flux[:, None]
@@ -86,19 +151,14 @@ class Starwise1DCnn(CnnNNet):
                 star_score = np.nan
                 p_seg = np.array([], dtype=np.float32)
             else:
-                # Make sure shape matches model: (N, window, channels)
                 if segs.ndim == 2:
-                    segs_in = segs[..., None]  # (N, window, 1)
+                    segs_in = segs[..., None]
                 else:
                     segs_in = segs
 
-                # Predict segment probabilities with  trained CNN
                 p_seg = self.model.predict(segs_in, verbose=0).ravel().astype(np.float32)
-
-                # Aggregate to star-level probability
                 star_score = self._aggregate_segments(p_seg)
 
-            # Build a star row
             star_rows.append({
                 "target_id": target,
                 "mission": mission,
