@@ -26,8 +26,13 @@ class CnnModel:
         model = Starwise1DCnn( window=200, stride=50, top_k=5)
         model.model = tf.keras.models.load_model("best_ref.keras")
 
-        df_stars, seg_info = model.predict_stars_from_csv("Cut_CombinedExoplanetData.csv", return_segments=True)
-        print(df_stars.head())
+        df_stars, seg_info = model.predict_stars_from_csv("CombinedExoplanetData.csv", return_segments=True)
+        if 'star_score' in df_stars.columns:
+           df_stars = df_stars.sort_values('star_score', ascending=False).reset_index(drop=True)
+        print(df_stars.head(100))
+        out_path = "starwise_score_1dcnn.csv"
+        df_stars.to_csv(out_path, index=False)
+        print(f"Saved df_stars to {out_path}")
 
 
     def runAstro1DCNN(self):

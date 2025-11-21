@@ -21,7 +21,6 @@ class Astro1DCNN:
         self.op_threshold = 0.5  # will overwrite after evaluateModel
 
     def set_threshold(self, thr: float):
-        """Set deployment threshold chosen on VAL."""
         self.op_threshold = float(thr)
 
     def _aggregate_probs(self, probs, mode="topk_mean", k=3):
@@ -126,7 +125,6 @@ class Astro1DCNN:
             flux = (flux - med) / mad
 
             if time is None:
-                # figure out if target missing or download failed
                 target, _ = self.commonHelper.row_to_target_and_mission(row)
                 if not target: skipped["no_id"] += 1
                 else:          skipped["dl_fail"] += 1
@@ -154,14 +152,14 @@ class Astro1DCNN:
                 y_seg = np.zeros(len(segs), dtype=int)
                 star_label = 0
                 neg_groups.add(self.commonHelper.row_to_target_and_mission(row)[0])
-                w_seg = np.full(len(segs), 0.3, dtype=np.float32)   # <— NEW: weak weight
+                w_seg = np.full(len(segs), 0.3, dtype=np.float32)   #  weak weight
             else:
                 y_seg = self.label_by_ephem(time, spans, t0, period, dur_h=dur_h,
                                             time_system=("BTJD" if mission=="TESS" else "BKJD"))
                 star_label = int((y_seg == 1).any())
                 (pos_groups if star_label==1 else neg_groups).add(self.commonHelper.row_to_target_and_mission(row)[0])
                 # confident labels: full weight
-                w_seg = np.ones(len(segs), dtype=np.float32)        # <— NEW
+                w_seg = np.ones(len(segs), dtype=np.float32)       
 
             # cap per star (keep weights in sync!)
             if per_star_cap is not None and len(segs) > per_star_cap:
@@ -192,7 +190,7 @@ class Astro1DCNN:
         X = np.vstack(segs_all).astype(np.float32)          # (N, window, C)
         y = np.concatenate(labels_all).astype(np.int32)
         groups = np.concatenate(groups_all)
-        sample_w = np.concatenate(weights_all).astype(np.float32)       # <— NEW
+        sample_w = np.concatenate(weights_all).astype(np.float32)       
 
         idx = np.arange(len(y)); np.random.shuffle(idx)
         X, y, groups, sample_w = X[idx], y[idx], groups[idx], sample_w[idx]
@@ -229,10 +227,6 @@ class Astro1DCNN:
         )
         return model
 
-
-    # def declareModel(self, channels=1):
-    #     cnn_nnet = CnnNNet(window=self.window, channels=channels)
-    #     return cnn_nnet.build_inception_resnet_1d(self.window, channels)
 
     # ---------- splitting ----------
     def stratified_group_train_val_test(self, y, groups, val_size=0.2, test_size=0.2, seed=42):
@@ -274,7 +268,6 @@ class Astro1DCNN:
             sample_weight=w_train,                      
             validation_data=(X_val, y_val, w_val),      
             epochs=epochs, batch_size=batch_size,
-            # drop class_weight when using sample_weight, or multiply into w_train if you want both
             callbacks=cbs, verbose=1
         )
         return history, X_test, y_test, X_val, y_val
@@ -299,7 +292,6 @@ class Astro1DCNN:
         try:
             compile_report = model.evaluate(X_test, y_test, verbose=0, return_dict=True)
         except TypeError:
-            # TF versions without return_dict
             res = model.evaluate(X_test, y_test, verbose=0)
             names = model.metrics_names
             if not isinstance(res, (list, tuple)):
@@ -315,7 +307,6 @@ class Astro1DCNN:
         yhat_val  = (p_val  >= thr).astype(int)
         yhat_test = (p_test >= thr).astype(int)
 
-        # threshold-free summaries (nice to log)
         val_roc = roc_auc_score(y_val, p_val)
         val_ap  = average_precision_score(y_val, p_val)
         tst_roc = roc_auc_score(y_test, p_test)

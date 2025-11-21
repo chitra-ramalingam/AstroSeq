@@ -51,7 +51,7 @@ class Starwise1DCnn(CnnNNet):
                 print("Cached EMPTY star, skipping:", target)
                 return None, None, None, target
 
-            print("Loading from cache:", target)
+            # print("Loading from cache:", target)
             time   = data["time"]
             flux   = data["flux"]
             mission = str(data["mission"])
