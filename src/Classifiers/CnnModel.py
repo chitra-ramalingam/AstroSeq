@@ -5,6 +5,7 @@ from src.Classifiers.Starwise1DCnn import Starwise1DCnn
 from src.Classifiers.isolation_forest import IsolationForestScorer
 from src.Classifiers.CnnNNet import CnnNNet
 from src.Classifiers.CommonHelper import CommonHelper
+from src.Classifiers.Embeddings.StarVec import StarVec
 import tensorflow as tf
 import numpy as np
 class CnnModel:
@@ -33,6 +34,15 @@ class CnnModel:
         out_path = "starwise_score_1dcnn.csv"
         df_stars.to_csv(out_path, index=False)
         print(f"Saved df_stars to {out_path}")
+
+    def runStarVecEmbeddings(self):
+        starvec = StarVec(window=200, model_path="best_ref.keras")
+        starvec.featurize_star(
+            csv_path="CombinedExoplanetData.csv",
+            output_path="star_embeddings_1dcnn.npz",
+            batch_size=128,
+            use_topk=5
+        )
 
 
     def runAstro1DCNN(self):

@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import lightkurve as lk
 import tensorflow as tf
+import os
 
 class CommonHelper:
     def __init__(selfa):
@@ -79,7 +80,6 @@ class CommonHelper:
     def segment_with_idx(self, flux, w=None, stride=None):
             if flux.ndim == 1: flux = flux[:, None]
             T, C = flux.shape
-            if w is None: w = self.window
             if stride is None: stride = max(1, w // 4)
             if w <= 0 or T < w:
                 return np.empty((0, w, C), np.float32), np.empty((0, 2), int)
@@ -91,7 +91,21 @@ class CommonHelper:
                 segs.append(seg)
                 spans.append((i, i+w))
             return np.asarray(segs, np.float32), np.asarray(spans, int)
+    
+    def cache_path_for_target(self, cache_dir, target):
+        # e.g. "TIC 123456" -> "TIC_123456.npz"
+        safe_target = str(target).replace(" ", "_").replace("/", "_")
+        return os.path.join(cache_dir, f"{safe_target}.npz")
 
+    def normalize_flux(self, flux):
+        """Median/MAD normalization, same as training."""
+        if flux.ndim == 1:
+            flux = flux[:, None]  # (T, 1)
+        med = np.median(flux, axis=0, keepdims=True)
+        mad = np.median(np.abs(flux - med), axis=0, keepdims=True) + 1e-6
+        flux_norm = (flux - med) / mad
+        return flux_norm
+    
 
 
    

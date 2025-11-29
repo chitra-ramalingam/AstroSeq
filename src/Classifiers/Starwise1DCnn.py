@@ -17,18 +17,10 @@ class Starwise1DCnn(CnnNNet):
     # --- core utils ---
 
     def _normalize_flux(self, flux):
-        """Median/MAD normalization, same as training."""
-        if flux.ndim == 1:
-            flux = flux[:, None]  # (T, 1)
-        med = np.median(flux, axis=0, keepdims=True)
-        mad = np.median(np.abs(flux - med), axis=0, keepdims=True) + 1e-6
-        flux_norm = (flux - med) / mad
-        return flux_norm
+       return self.commonHelper.normalize_flux(flux)
     
     def _cache_path_for_target(self, target):
-        # e.g. "TIC 123456" -> "TIC_123456.npz"
-        safe_target = str(target).replace(" ", "_").replace("/", "_")
-        return os.path.join(self.cache_dir, f"{safe_target}.npz")
+        return self.commonHelper.cache_path_for_target(self.cache_dir, target)
 
     def _segment_flux(self, flux):
         segs, spans = self.commonHelper.segment_with_idx(flux, w=self.window, stride=self.stride)
