@@ -11,7 +11,9 @@ def main():
     # the better the scrore implies the higher the chance of an exoplanet transit
   
     # cnnModel.runStarbased1DCNN()
-    cnnModel.runStarVecEmbeddings()
+   # cnnModel.runStarVecEmbeddings()
+    cnnModel.runTestOnStarVecEmbeddings()
+    
 
 if __name__ == "__main__":
     main()

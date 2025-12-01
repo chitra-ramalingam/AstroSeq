@@ -52,9 +52,7 @@ class StarVec:
                     continue
             except Exception:
                 continue
-            # What normalization I use?
             flux_norm = self.commonHelper.normalize_flux(flux)
-            # Segment
             segs, spans = self.commonHelper.segment_with_idx(flux= flux_norm, w=self.window)
             seg_embs = self.encoder.predict(segs, batch_size=batch_size, verbose=0)
             seg_scores = self.trained_model.predict(segs, batch_size=batch_size, verbose=0)
@@ -68,34 +66,63 @@ class StarVec:
             star_to_embs[target].append(seg_embs)    # list of arrays
             star_to_scores[target].append(seg_scores)
 
+
         star_ids = []
         star_vecs = []
+        bad = []  # (target, reason)
 
         for target, emb_list in star_to_embs.items():
             # concat all segments of the star
-            H = np.vstack(emb_list)          # shape: (num_total_segs, emb_dim)
+            H = np.vstack(emb_list)  # (num_total_segs, emb_dim)
             S = np.concatenate(star_to_scores[target])  # (num_total_segs,)
 
             if use_topk is not None and use_topk > 0:
-                # use only top-k by score
                 k = min(use_topk, H.shape[0])
-                idx = np.argsort(S)[-k:]     # indices of top-k scores
+                idx = np.argsort(S)[-k:]
                 H_used = H[idx]
             else:
-                # use all segments
                 H_used = H
 
-            # simple mean pooling
-            z_star = H_used.mean(axis=0)     # (emb_dim,)
+            # --- NEW: drop any segments with NaN/Inf ---
+            seg_ok = np.isfinite(H_used).all(axis=1)
+            H_used = H_used[seg_ok]
+            if H_used.shape[0] == 0:
+                bad.append((target, "all segments non-finite"))
+                continue
+
+            # --- NEW: mean pool in float64 to avoid overflow ---
+            z_star = H_used.astype(np.float64).mean(axis=0)
+
+            # --- NEW: validate star embedding ---
+            if not np.isfinite(z_star).all():
+                bad.append((target, "star embedding non-finite after mean"))
+                continue
+
+            # --- NEW (recommended): L2-normalize the star embedding ---
+            n = np.linalg.norm(z_star)
+            if not np.isfinite(n) or n == 0:
+                bad.append((target, "bad norm"))
+                continue
+            z_star = (z_star / (n + 1e-12)).astype(np.float32)
+
             star_ids.append(target)
             star_vecs.append(z_star)
 
         # ---- AFTER the loop ----
         star_ids = np.array(star_ids)
-        star_vecs = np.vstack(star_vecs)      # (num_stars, emb_dim)
-        np.savez(output_path, star_ids=star_ids, star_vecs=star_vecs)
+        star_vecs = np.vstack(star_vecs).astype(np.float32)
+
+        np.savez_compressed(output_path, star_ids=star_ids, star_vecs=star_vecs)
+
+        if bad:
+            with open(output_path.replace(".npz", "_bad_embeddings.txt"), "w", encoding="utf-8") as f:
+                for sid, reason in bad:
+                    f.write(f"{sid}\t{reason}\n")
+
         print(f"Saved {len(star_ids)} star embeddings to {output_path}")
+        print(f"Dropped {len(bad)} stars (see *_bad_embeddings.txt)")
         return star_ids, star_vecs
+
     
 
     def _fetch_with_cache(self, row):

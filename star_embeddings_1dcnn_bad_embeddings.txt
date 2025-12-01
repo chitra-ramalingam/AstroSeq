@@ -1,0 +1,21 @@
+EPIC 211611139	all segments non-finite
+K2-398	all segments non-finite
+K2-243	all segments non-finite
+EPIC 217855533	all segments non-finite
+TIC 147890655	all segments non-finite
+TIC 122695048	all segments non-finite
+TIC 452281203	all segments non-finite
+TIC 87044036	all segments non-finite
+TIC 63100069	all segments non-finite
+EPIC 246377038	all segments non-finite
+EPIC 210801536	all segments non-finite
+EPIC 246325464	all segments non-finite
+TIC 438057373	all segments non-finite
+TIC 157572174	all segments non-finite
+TIC 281225729	all segments non-finite
+TIC 435259601	all segments non-finite
+TIC 157655504	all segments non-finite
+EPIC 212432685	all segments non-finite
+EPIC 211852187	all segments non-finite
+EPIC 211630537	all segments non-finite
+TIC 468911753	all segments non-finite

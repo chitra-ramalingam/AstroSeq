@@ -107,5 +107,41 @@ class CommonHelper:
         return flux_norm
     
 
+    def fetch_with_cache(self, row):
+        target, _ = self.row_to_target_and_mission(row)
+        if not target:
+            return None, None, None, None
+        cache_path = self.cache_path_for_target(cache_dir="lc_cache", target= target)
 
-   
+        # 1) Try to load from cache
+        if os.path.exists(cache_path):
+            data = np.load(cache_path, allow_pickle=True)
+
+            if "empty" in data and bool(data["empty"]):
+                print("Cached EMPTY star, skipping:", target)
+                return None, None, None, target
+
+            time   = data["time"]
+            flux   = data["flux"]
+            mission = str(data["mission"])
+            target  = str(data["target"])
+            return time, flux, mission, target
+        
+    def fetch_with_targetId_FromCache(self, target):
+        if not target:
+            return None, None, None, None
+        cache_path = self.cache_path_for_target(cache_dir="lc_cache", target= target)
+
+        # 1) Try to load from cache
+        if os.path.exists(cache_path):
+            data = np.load(cache_path, allow_pickle=True)
+
+            if "empty" in data and bool(data["empty"]):
+                print("Cached EMPTY star, skipping:", target)
+                return None, None, None, target
+
+            time   = data["time"]
+            flux   = data["flux"]
+            mission = str(data["mission"])
+            target  = str(data["target"])
+            return time, flux, mission, target

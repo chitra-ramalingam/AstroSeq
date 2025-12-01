@@ -1,3 +1,4 @@
+from src.Classifiers.Embeddings.EmbeddingPresentation import EmbeddingPresentation
 from src.Classifiers.SimpleLightCurve import SimpleLightCurve
 from src.Classifiers.Astro1DCNN import Astro1DCNN
 from src.Classifiers.CNNPlots import CNNPlots
@@ -10,6 +11,8 @@ import tensorflow as tf
 import numpy as np
 class CnnModel:
     def __init__(self):
+        self.starwise1DCsv = "starwise_score_1dcnn.csv"
+        self.starEmbeddingsNpz = "star_embeddings_1dcnn.npz"
         pass
 
     def runSampleModels(self):
@@ -31,7 +34,7 @@ class CnnModel:
         if 'star_score' in df_stars.columns:
            df_stars = df_stars.sort_values('star_score', ascending=False).reset_index(drop=True)
         print(df_stars.head(100))
-        out_path = "starwise_score_1dcnn.csv"
+        out_path = self.starwise1DCsv
         df_stars.to_csv(out_path, index=False)
         print(f"Saved df_stars to {out_path}")
 
@@ -39,10 +42,17 @@ class CnnModel:
         starvec = StarVec(window=200, model_path="best_ref.keras")
         starvec.featurize_star(
             csv_path="CombinedExoplanetData.csv",
-            output_path="star_embeddings_1dcnn.npz",
+            output_path=self.starEmbeddingsNpz,
             batch_size=128,
             use_topk=5
         )
+
+    def runTestOnStarVecEmbeddings(self):
+        embed_presenter = EmbeddingPresentation(npz_path=self.starEmbeddingsNpz,
+                                                star_scores_csv=self.starwise1DCsv)
+        star_vecs = embed_presenter.load_embeddings_and_check()
+        embed_presenter.plot_embeddings(star_vecs=star_vecs)
+        embed_presenter.runRegressorNet()
 
 
     def runAstro1DCNN(self):
