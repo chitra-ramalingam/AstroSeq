@@ -216,6 +216,13 @@ Conclusion: Isolation Forest was not effective here; the 1D CNN approach is more
   - Segment probabilities are not fully calibrated.
   - Star-level scores are best interpreted as **relative ranking**, not physical probabilities.
 
+  # Applied the star classifier to all stars.
+
+Chose a threshold / top-N to define “positives”.
+Saved 197 stars to CSV with columns:
+star_id, score_raw , p_highclass (you stored 1 for those that passed your cut)
+A model-selected set of strongly transit-like stars, containing a mix of confirmed planets, candidates, and likely false positives.
+
 --- Chat GPT 5.1 helped me create this Readme.md
 
 ## Keywords (for discoverability)
