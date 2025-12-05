@@ -1,3 +1,4 @@
+from src.Classifiers.BinaryEmbeddingsClassifier import BinaryEmbeddingsClassifier
 from src.Classifiers.Embeddings.EmbeddingPresentation import EmbeddingPresentation
 from src.Classifiers.SimpleLightCurve import SimpleLightCurve
 from src.Classifiers.Astro1DCNN import Astro1DCNN
@@ -13,6 +14,7 @@ class CnnModel:
     def __init__(self):
         self.starwise1DCsv = "starwise_score_1dcnn.csv"
         self.starEmbeddingsNpz = "star_embeddings_1dcnn.npz"
+        self.starEmbeddings_with_scores = "star_embeddings_with_scores.npz"
         pass
 
     def runSampleModels(self):
@@ -46,6 +48,10 @@ class CnnModel:
             batch_size=128,
             use_topk=5
         )
+
+    def runBinaryEmbeddingsClassifier(self):
+        binary_clf = BinaryEmbeddingsClassifier()
+        binary_clf.classify(self.starEmbeddings_with_scores)
 
     def runTestOnStarVecEmbeddings(self):
         embed_presenter = EmbeddingPresentation(npz_path=self.starEmbeddingsNpz,

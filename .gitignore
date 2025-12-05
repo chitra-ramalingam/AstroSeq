@@ -8,3 +8,7 @@ src/Classifiers/__pycache__/CommonHelper.cpython-313.pyc
 lc_cache/*.npz
 src/Classifiers/__pycache__/CnnNNet.cpython-313.pyc
 src/Classifiers/Embeddings/__pycache__/StarVec.cpython-313.pyc
+src/Classifiers/__pycache__/BinaryEmbeddingsClassifier.cpython-313.pyc
+src/Classifiers/Embeddings/__pycache__/PlotEmbeddings.cpython-313.pyc
+src/Classifiers/Embeddings/__pycache__/RegressorNet.cpython-313.pyc
+src/Classifiers/Embeddings/__pycache__/EmbeddingPresentation.cpython-313.pyc

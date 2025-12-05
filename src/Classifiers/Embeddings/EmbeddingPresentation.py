@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.decomposition import PCA
+import pandas as pd
 import matplotlib.pyplot as plt
 from src.Classifiers.Embeddings.RegressorNet import RegressorNet
 from src.Classifiers.Embeddings.PlotEmbeddings import PlotEmbeddings
@@ -66,8 +67,23 @@ class EmbeddingPresentation:
             embedding_path=self.npz_path,
             star_scores_csv= self.star_scores_csv
         )
-        reg_net.calculate_cosinedistance(smooth_scores, star_ids, star_vecs)
-        wierd_stars = reg_net.find_outliers(smooth_scores, star_ids, star_vecs)
+        plotter = PlotEmbeddings()
+        # df = pd.DataFrame({
+        #      "target": star_ids,
+        #      "smooth_score": smooth_scores,
+        # })
+
+        # e.g. focus only on top 50 by score
+        # df_top = df.sort_values("smooth_score", ascending=False).head(50)
+
+        # for _, row in df_top.iterrows():
+        #     plotter.inspect_star(
+        #         target_id=row["target"],
+        #         window=200,
+        #         topk_segments=20,
+        #     )
+
+        # wierd_stars = reg_net.find_outliers(smooth_scores, star_ids, star_vecs)
         # plotEmbeddings = PlotEmbeddings()
         # for index, row in wierd_stars.iterrows():
         #     target_id = row["target"]
