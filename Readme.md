@@ -230,3 +230,18 @@ A model-selected set of strongly transit-like stars, containing a mix of confirm
 `exoplanet`, `transit`, `TESS`, `Kepler`, `K2`, `TOI`, `Lightkurve`, `MAST`, `1D CNN`, `Inception ResNet`, `time series`, `astroinformatics`, `deep learning`, `astronomy`, `exoplanet detection`, `Python`, `TensorFlow`
 
 ---
+
+
+----------------
+
+Mission wise classifier and higher window 1024. No capping
+---------------
+
+| Run / Sampling setup                                             | Train ROC AUC | Val ROC AUC | Test ROC AUC (segment) | Notes                                                                                                        |
+
+| **Base model** (`tess_window1024.keras`, pre-hard-neg)           |    **0.7966** |  **0.5294** |           **0.630538** |   
+|
+| **Hard-neg only, 1:1** (pos vs hard negatives, balanced)         |    **0.8926** |  **0.4526** |          **0.4789999** | 
+| **50K cap, 1:1** (balanced, random negs; “Good : 50K ca p final”) |             — |           — |          **0.6517417** | Y
+| **Epoch 1 snapshot, 1:1 (full ~221k balanced)**                  |    **0.7198** |  **0.5369** |                      — | Y|
+| **Epoch 1 snapshot, 1:1 (steps 6926)**                           |    **0.7317** |  **0.4505** |                                                        |

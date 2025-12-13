@@ -17,7 +17,8 @@ def main():
             #     #-------- Binary classifier on top of star embeddings
             #     cnnModel.runBinaryEmbeddingsClassifier()
         largeWindowModel = LargeWindowCnnModel()
-        largeWindowModel.build_model()
+        largeWindowModel.build_model(mission="tess", do_hard_neg=True)
+        #largeWindowModel.build_model(mission="kepler", do_hard_neg=True)
         
 if __name__ == "__main__":
     main()

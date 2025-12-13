@@ -1,13 +1,15 @@
+import os
+import shutil
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+
 from src.Classifiers.Builders.MissionSegmentBuilder import MissionSegmentBuilder
 from src.Classifiers.Builders.EphermisBuilder import EphermisBuilder
 from src.Classifiers.LargeWindow.ModelSplitter import ModelSplitter
 from src.Classifiers.Builders.BuilderHelper import BuilderHelper
 from sklearn.metrics import roc_auc_score, average_precision_score
-from src.Classifiers.CommonHelper import CommonHelper
-import matplotlib.pyplot as plt
+
 
 class LargeWindowCnnModel:
     def __init__(self):
@@ -16,82 +18,124 @@ class LargeWindowCnnModel:
         self.stride = 256
         self.catalog_path = "CombinedExoplanetData.csv"
 
-    def build_model(self):
-        missionBuilder = MissionSegmentBuilder(window=1024, mission="tess")
-        eBuilder = EphermisBuilder(window=1024, stride=256)
-        segments_df = missionBuilder.read_from_file(self.catalog_path)
-        # this writes something like "segments_all_W1024_S256_tess.parquet"
+    def build_model(self, mission: str = "tess", do_hard_neg: bool = False):
+        mission = mission.strip().lower()
 
-        # 2) label them using the same catalog
-        labeled_df = eBuilder.label_segments_from_catalog(
-            segments_path="segments_all_W1024_S256_tess.parquet",
-            catalog_path=self.catalog_path,
-            output_path="segments_all_W1024_S256_tess_labeled.parquet",
-        )
+        seg_path = f"segments_all_W1024_S256_{mission}.parquet"
+        labeled_path = f"segments_all_W1024_S256_{mission}_labeled.parquet"
 
-        print(labeled_df.columns)
-        print(labeled_df.head(5))
-        print("New label counts:\n", labeled_df["label"].value_counts())
+        # models
+        base_model_path = f"{mission}_window1024_base.keras"     # baseline output (kepler will create this)
+        hard_model_path = f"{mission}_window1024_hard.keras"     # optional (only if do_hard_neg=True)
 
+        # hard-neg artifacts (optional)
+        hard_neg_path = f"{mission}_hard_neg_top80k.parquet"
 
+        # 1) Build segments + label only if missing
+        if not os.path.exists(seg_path):
+            missionBuilder = MissionSegmentBuilder(window=self.window_size, mission=mission)
+            missionBuilder.read_from_file(self.catalog_path)
+
+        if not os.path.exists(labeled_path):
+            eBuilder = EphermisBuilder(window=self.window_size, stride=self.stride)
+            labeled_df = eBuilder.label_segments_from_catalog(
+                segments_path=seg_path,
+                catalog_path=self.catalog_path,
+                output_path=labeled_path,
+            )
+            print("New label counts:\n", labeled_df["label"].value_counts())
+
+        # 2) Split (star-level, no leakage)
         modelSplit = ModelSplitter(self.window_size)
         train_df, val_df, test_df = modelSplit.split_model(
-            segments_path="segments_all_W1024_S256_tess_labeled.parquet",
+            segments_path=labeled_path,
+            mission=mission,
             catalog_path=self.catalog_path,
-        )   
-        for name, df in [("train", train_df), ("val", val_df), ("test", test_df)]:
-            print(name, "unique labels:", sorted(df["label"].dropna().unique()))
-      
+        )
+
         for df in (train_df, val_df, test_df):
             df["label"] = df["label"].fillna(0).astype(int)
 
-        train_gen, val_gen, test_gen = modelSplit.generateSegments(train_df, val_df, test_df)   
-        Xb, yb = next(iter(train_gen))
-        print("Xb shape:", Xb.shape)              # expect (B, 1024, 2)
-        print("yb shape:", yb.shape)              # expect (B,)
-        print("yb unique:", np.unique(yb))
-        print("batch pos fraction:", yb.mean())
-        print("any NaN in X?", np.isnan(Xb).any())
+        print("Train pos frac:", float(train_df["label"].mean()))
+        print("Val positive fraction:", float(val_df["label"].mean()))
+        print("Test positive fraction:", float(test_df["label"].mean()))
 
-        print("Train pos frac:", train_df["label"].mean())
-        val_pos_frac = val_df["label"].mean()
-        print("Val positive fraction:", val_pos_frac)
-        print("Test positive fraction:", test_df["label"].mean())
+        # 3) BASELINE TRAIN (THIS is what you want for Kepler)
+        print(f"\n=== BASELINE TRAIN ({mission}) ===")
+        train_gen, val_gen, test_gen = modelSplit.generateSegments(
+            train_df, val_df, test_df,
+            batch_size=64,
+            balance=True,
+            neg_pos_ratio=3,        # start with 1:3
+            hard_neg_path=None,     # <- OFF (important)
+            hard_neg_frac=0.0,      # <- OFF
+            mission=mission,
+        )
 
-        # model = self.helper.declareHigherDimModel(self.window_size ,channels=2)
-        # preds = model.predict(Xb, verbose=0).ravel()
+        # Train from scratch for Kepler baseline
+        self.fit_and_evaluate(
+            train_gen, val_gen, test_gen,
+            init_model_path=None,
+            out_model_path=base_model_path
+        )
 
-        # print("yb[:20]:", yb[:20])
-        # print("preds[:20]:", np.round(preds[:20], 4))
-        # print("preds min/max/mean:", preds.min(), preds.max(), preds.mean())
-        # # 1) Fresh model
-       
-        
-        # 3) Check predictions again
-        #preds_toy = model_toy.predict(Xb, verbose=0).ravel()
+        # 4) OPTIONAL: Hard-neg step (leave OFF for Kepler until baseline is decent)
+        if not do_hard_neg:
+            print(f"[Info] do_hard_neg=False -> skipping hard negative mining for {mission}")
+            return
 
-        #print("yb:", yb[:20])
-        #print("preds_toy:", np.round(preds_toy[:20], 3))
-        #print("preds_toy min/max/mean:", preds_toy.min(), preds_toy.max(), preds_toy.mean())
+        print(f"\n=== HARD NEGATIVE MINING ({mission}) ===")
+        modelSplit.mine_hard_negatives(
+            train_df=train_df,
+            model_path=base_model_path,
+            mission=mission,
+            max_neg_pool=300_000,
+            topk=80_000,
+            max_neg_per_star=200,
+            output_path=hard_neg_path,
+        )
 
-        #print("Toy ROC AUC:", roc_auc_score(yb, preds_toy))
-        #print("Toy PR AUC:", average_precision_score(yb, preds_toy))
-        #self.plot_toy(Xb, yb)
-        self.fit_and_evaluate(train_gen, val_gen, test_gen)
+        print(f"\n=== HARD-NEG FINE-TUNE ({mission}) ===")
+        train_gen_hn, val_gen, test_gen = modelSplit.generateSegments(
+            train_df, val_df, test_df,
+            batch_size=64,
+            balance=True,
+            neg_pos_ratio=5,        # gentler
+            hard_neg_path=hard_neg_path,
+            hard_neg_frac=0.10,     # tiny spice, not the meal
+            mission=mission,
+        )
 
-    def fit_and_evaluate(self, train_gen, val_gen, test_gen):
-        model = self.helper.declareHigherDimModel(self.window_size ,channels=2)
-        class_weight = {0: 1.0, 1: 1.0}  # if 50/50 sampling
+        self.fit_and_evaluate(
+            train_gen_hn, val_gen, test_gen,
+            init_model_path=base_model_path,
+            out_model_path=hard_model_path
+        )
 
-        optimizer = tf.keras.optimizers.Adam(learning_rate=3e-4)
+
+    def fit_and_evaluate(self, train_gen, val_gen, test_gen,
+                         init_model_path:str,
+                          out_model_path: str):
+        if init_model_path:
+            model = tf.keras.models.load_model(init_model_path)
+            # recompile with a smaller LR for fine-tuning
+            model.compile(
+                optimizer=tf.keras.optimizers.Adam(1e-4),
+                loss=tf.keras.losses.BinaryCrossentropy(),
+                metrics=[tf.keras.metrics.AUC(curve="ROC", name="roc_auc"),
+                        tf.keras.metrics.AUC(curve="PR",  name="pr_auc")],
+            )
+        else:
+            model = self.helper.declareHigherDimModel(self.window_size, channels=2)
 
         checkpoint = tf.keras.callbacks.ModelCheckpoint(
-            filepath="tess_window1024.keras",
+            filepath=out_model_path,
             monitor="val_pr_auc",
             mode="max",
             save_best_only=True,
             save_weights_only=False,
         )
+
         callbacks = [
             checkpoint,
             tf.keras.callbacks.TerminateOnNaN(),
@@ -99,7 +143,7 @@ class LargeWindowCnnModel:
                 monitor="val_pr_auc",
                 mode="max",
                 patience=3,
-                min_delta=1e-3,       # require +0.001 improvement
+                min_delta=1e-3,
                 restore_best_weights=True,
             ),
         ]
@@ -109,67 +153,37 @@ class LargeWindowCnnModel:
             validation_data=val_gen,
             epochs=15,
             callbacks=callbacks,
-            class_weight=class_weight
+            verbose=1,
         )
-        test_metrics = model.evaluate(test_gen)
-        print("Test metrics:", dict(zip(model.metrics_names, test_metrics)))
 
-        y_true = []
-        y_pred = []
-        star_ids = []
+        best_model = tf.keras.models.load_model(out_model_path)
 
-        for X_batch, y_batch in test_gen:
-            preds = model.predict(X_batch, verbose=0).ravel()
-            y_true.extend(y_batch.tolist())
+        test_metrics = best_model.evaluate(test_gen, verbose=0)
+        print("Test metrics:", dict(zip(best_model.metrics_names, test_metrics)))
+
+        y_true, y_pred = [], []
+        for Xb, yb in test_gen:
+            preds = np.asarray(best_model.predict_on_batch(Xb)).ravel()
+            y_true.extend(yb.tolist())
             y_pred.extend(preds.tolist())
-
-        # segment-level ROC AUC
 
         print("Segment ROC AUC:", roc_auc_score(y_true, y_pred))
         print("Segment PR AUC:", average_precision_score(y_true, y_pred))
 
-        #model.save(".keras")
+        return history
 
+    def checkSavedModel(self, savedModelPath: str, test_gen):
+        m = tf.keras.models.load_model(savedModelPath)
+        print("Saved Loaded:", m.name)
+        print("Saved Keras file Input shape:", m.input_shape)
+        print("Output shape:", m.output_shape)
+        print("Num params:", m.count_params())
 
+        y_true, y_pred = [], []
+        for Xb, yb in test_gen:
+            preds = np.asarray(m.predict_on_batch(Xb)).ravel()
+            y_true.extend(yb.tolist())
+            y_pred.extend(preds.tolist())
 
-    def check_val(self,val_df, model):
-        # 1) grab one star from val that *has* positives
-        val_with_pos = val_df.groupby("star_id")["label"].max()
-        star_id = val_with_pos[val_with_pos > 0].index[0]
-
-        star_segments = val_df[val_df["star_id"] == star_id].sort_values("start")
-
-        ch = CommonHelper()
-
-        time, flux, mission, target = ch.fetch_with_targetId_FromCache(star_id)
-
-        # 2) build all segment arrays for that star
-        import numpy as np
-
-        X_list = []
-        for _, row in star_segments.iterrows():
-            start = int(row["start"])
-            end = int(row["end"])
-            X_list.append(flux[start:end, :])  # (1024, 2)
-
-        X_star = np.stack(X_list, axis=0)
-        y_star = star_segments["label"].values
-
-        # 3) predict
-        preds_star = model.predict(X_star, verbose=0).ravel()
-
-        print("star:", star_id)
-        print("labels:", y_star[:30])
-        print("preds:",  np.round(preds_star[:30], 3))
-        print("preds min/max/mean:", preds_star.min(), preds_star.max(), preds_star.mean())
-
-    def plot_toy(self, Xb, yb):
-
-        idx_pos = np.where(yb == 1)[0][0]
-        seg_pos = Xb[idx_pos]        # (1024, 2)
-        flat = seg_pos[:, 1]         # flattened channel
-
-        plt.plot(flat)
-        plt.gca().invert_yaxis()
-        plt.title("Example positive segment (flattened flux)")
-        plt.show()
+        print("Saved ROC:", roc_auc_score(y_true, y_pred))
+        print("Saved PR :", average_precision_score(y_true, y_pred))

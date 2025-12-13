@@ -106,17 +106,18 @@ class EphermisBuilder:
         catalog = pd.read_csv(catalog_path, low_memory=False)
 
         # normalize
-        segments_df["mission"] = segments_df["mission"].str.lower()
+        segments_df["mission"] = segments_df["mission"].astype(str).str.lower()
 
         eph = self._prepare_ephemeris(catalog).copy()
-        eph["mission"] = eph["mission"].str.lower()
+        eph["mission"] = eph["mission"].astype(str).str.lower()
 
         MIN_IN_TRANSIT_POINTS = int(0.10 * self.window)  # 10% of 1024 = 102
 
-        labeled_rows = []
+        labeled_rows: list[tuple[str, str, int, int, int]] = []
 
         # Loop per star+mission, compute mask_any once, then label all its segments
         for (star_id, mission), segs in segments_df.groupby(["star_id", "mission"], sort=False):
+
             # get all ephemerides (planets) for this star
             planets = eph[(eph["star_id"] == star_id) & (eph["mission"] == mission)]
             if len(planets) == 0:
@@ -138,12 +139,19 @@ class EphermisBuilder:
                     labeled_rows.append((star_id, mission, int(r["start"]), int(r["end"]), 0))
                 continue
 
+            time = np.asarray(time)
+            time_base = self._guess_time_base(time)
+
             # OR mask across all planets
             masks = []
-            for _, p in planets.drop_duplicates(subset=["period_days","t0_mission","duration_days"]).iterrows():
+            for _, p in planets.drop_duplicates(subset=["period_days", "t0_mission", "duration_days"]).iterrows():
                 period = float(p["period_days"])
-                t0 = float(p["t0_mission"])
+                t0_mission = float(p["t0_mission"])
                 dur = float(p["duration_days"])
+
+                # Convert ephemeris t0 into the SAME time base as `time`
+                t0 = self._convert_t0_to_timebase(mission=mission, t0_mission=t0_mission, time_base=time_base)
+
                 mask_p = self._in_transit_mask(time, period, t0, dur)
                 if mask_p is not None and mask_p.shape[0] == len(time):
                     masks.append(mask_p)
@@ -168,10 +176,10 @@ class EphermisBuilder:
 
                 labeled_rows.append((star_id, mission, start, end, label))
 
-        labels_df = pd.DataFrame(labeled_rows, columns=["star_id","mission","start","end","label"])
+        labels_df = pd.DataFrame(labeled_rows, columns=["star_id", "mission", "start", "end", "label"])
 
         # Merge by keys (guaranteed correct alignment)
-        out_df = segments_df.merge(labels_df, on=["star_id","mission","start","end"], how="left")
+        out_df = segments_df.merge(labels_df, on=["star_id", "mission", "start", "end"], how="left")
         out_df["label"] = out_df["label"].fillna(0).astype(int)
 
         if output_path is None:
@@ -179,3 +187,51 @@ class EphermisBuilder:
 
         out_df.to_parquet(output_path, index=False)
         return out_df
+
+    def _guess_time_base(self, time: np.ndarray) -> str:
+        """
+        Very rough heuristic:
+        - TESS BTJD is usually ~ [1300..2500]
+        - Kepler/K2 BKJD is usually ~ [0..5000]
+        - Full BJD is ~ 2454xxx..2459xxx
+        """
+        tmed = float(np.nanmedian(time))
+        if tmed > 2_000_000:
+            return "BJD"
+        if 10_000 < tmed < 200_000:
+            return "BJD_OFFSET_UNKNOWN"
+        # Most LK Kepler/K2/TESS reduced bases fall here
+        return "REDUCED"
+    
+
+    def _convert_t0_to_timebase(
+        self,
+        mission: str,
+        t0_mission: float,
+        time_base: str
+        ) -> float:
+            """
+            Convert t0_mission (as stored in your eph table: BTJD for TESS, BKJD for Kepler/K2)
+            into the same base as `time`.
+            """
+            mission = (mission or "").strip().lower()
+
+            if np.isnan(t0_mission):
+                return np.nan
+
+            if time_base == "REDUCED":
+                # We want BTJD for TESS, BKJD for Kepler/K2 -> already what you store
+                return float(t0_mission)
+
+            if time_base == "BJD":
+                # Need full BJD
+                if mission == "tess":
+                    # t0_mission is BTJD -> convert to BJD
+                    return float(t0_mission) + 2457000.0
+                if mission in ("kepler", "k2"):
+                    # t0_mission is BKJD -> convert to BJD
+                    return float(t0_mission) + 2454833.0
+
+            # fallback
+            return float(t0_mission)
+
