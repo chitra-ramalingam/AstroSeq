@@ -260,3 +260,12 @@ Kepler runs output data
 | KEP-BASE-7 | kepler | 1024 | 256 | 7:1 | 0.00 | 5933 / 1048 / 1233 | 378373 / 67031 / 77978 | 0.7366 |  | 0.5117 | 0.1573 | 6.5621 | 0.6393459 | 0.3117866 | 0.3392282 | `kepler_window1024_base.keras` | do_hard_neg=False; val_loss high (likely calibration), but PR/ROC signal present |
 
 -------------
+
+
+# K2 Results
+| Run | neg_pos_ratio | Val loss | Val ROC AUC | Val PR AUC | Test loss | Test segments (neg/pos) | Test pos frac | Baseline PR (pos frac) | Segment ROC AUC | Segment PR AUC | PR lift vs baseline |
+| --: | ------------: | -------: | ----------: | ---------: | --------: | ----------------------: | ------------: | ---------------------: | --------------: | -------------: | ------------------: |
+|   A |     (unknown) |   0.7771 |      0.3813 |     0.1234 |    0.6730 |                815 / 31 |       0.03664 |                0.03664 |          0.5819 |        0.05609 |               1.53× |
+|   B |     (unknown) |   0.8755 |      0.4492 |     0.1476 |    0.6278 |                815 / 31 |       0.03664 |                0.03664 |          0.5741 |        0.05824 |               1.59× |
+|   C |     (unknown) |   0.7608 |      0.3810 |     0.1233 |    0.5187 |           (not printed) | (not printed) |          (not printed) |          0.5738 |        0.05492 |                   — |
+# ---------------

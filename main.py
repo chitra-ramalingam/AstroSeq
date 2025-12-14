@@ -18,7 +18,8 @@ def main():
             #     cnnModel.runBinaryEmbeddingsClassifier()
         largeWindowModel = LargeWindowCnnModel()
         #largeWindowModel.build_model(mission="tess",neg_pos_ratio= 3, do_hard_neg=True)
-        largeWindowModel.build_model(mission="kepler",neg_pos_ratio= 7 , do_hard_neg=False)
-        
+       # largeWindowModel.build_model(mission="kepler",neg_pos_ratio= 7 , do_hard_neg=False)
+        largeWindowModel.build_model(mission="k2", neg_pos_ratio=2,do_hard_neg=False)
+
 if __name__ == "__main__":
     main()

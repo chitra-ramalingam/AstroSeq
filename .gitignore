@@ -18,3 +18,5 @@ src/Classifiers/LargeWindow/__pycache__/ModelSplitter.cpython-313.pyc
 src/Classifiers/LargeWindow/__pycache__/SegmentDataset.cpython-313.pyc
 src/Classifiers/Builders/__pycache__/EphermisBuilder.cpython-313.pyc
 src/Classifiers/Builders/__pycache__/BuilderHelper.cpython-313.pyc
+src/Classifiers/Loaders/__pycache__/k2Loader.cpython-313.pyc
+src/Classifiers/LargeWindow/__pycache__/SmallMissionSplitter.cpython-313.pyc
