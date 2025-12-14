@@ -236,6 +236,8 @@ A model-selected set of strongly transit-like stars, containing a mix of confirm
 
 Mission wise classifier and higher window 1024. No capping
 ---------------
+Tess Run sampling
+
 
 | Run / Sampling setup                                             | Train ROC AUC | Val ROC AUC | Test ROC AUC (segment) | Notes                                                                                                        |
 
@@ -245,3 +247,16 @@ Mission wise classifier and higher window 1024. No capping
 | **50K cap, 1:1** (balanced, random negs; “Good : 50K ca p final”) |             — |           — |          **0.6517417** | Y
 | **Epoch 1 snapshot, 1:1 (full ~221k balanced)**                  |    **0.7198** |  **0.5369** |                      — | Y|
 | **Epoch 1 snapshot, 1:1 (steps 6926)**                           |    **0.7317** |  **0.4505** |                                                        |
+
+
+Kepler runs output data
+
+---------------
+
+## Kepler results log (window=1024)
+
+| Run ID | Mission | Window | Stride | Sampling (Neg:Pos) | hard_neg_frac | Stars (train/val/test) | Segs (train/val/test) | Train ROC | Train PR | Val ROC | Val PR | Val Loss | Test ROC | Test PR | Test Loss | Model file | Notes |
+|---|---|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| KEP-BASE-7 | kepler | 1024 | 256 | 7:1 | 0.00 | 5933 / 1048 / 1233 | 378373 / 67031 / 77978 | 0.7366 |  | 0.5117 | 0.1573 | 6.5621 | 0.6393459 | 0.3117866 | 0.3392282 | `kepler_window1024_base.keras` | do_hard_neg=False; val_loss high (likely calibration), but PR/ROC signal present |
+
+-------------

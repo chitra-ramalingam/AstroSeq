@@ -18,7 +18,9 @@ class LargeWindowCnnModel:
         self.stride = 256
         self.catalog_path = "CombinedExoplanetData.csv"
 
-    def build_model(self, mission: str = "tess", do_hard_neg: bool = False):
+    def build_model(self, mission: str = "tess", 
+                    neg_pos_ratio: int = 3,
+                    do_hard_neg: bool = False):
         mission = mission.strip().lower()
 
         seg_path = f"segments_all_W1024_S256_{mission}.parquet"
@@ -66,12 +68,14 @@ class LargeWindowCnnModel:
             train_df, val_df, test_df,
             batch_size=64,
             balance=True,
-            neg_pos_ratio=3,        # start with 1:3
+            neg_pos_ratio=neg_pos_ratio,        # start with 1:3
             hard_neg_path=None,     # <- OFF (important)
             hard_neg_frac=0.0,      # <- OFF
             mission=mission,
         )
 
+        self.check_Val_Prediction(val_gen)
+        #return
         # Train from scratch for Kepler baseline
         self.fit_and_evaluate(
             train_gen, val_gen, test_gen,
@@ -187,3 +191,19 @@ class LargeWindowCnnModel:
 
         print("Saved ROC:", roc_auc_score(y_true, y_pred))
         print("Saved PR :", average_precision_score(y_true, y_pred))
+
+    def check_Val_Prediction(self, val_gen):
+        best_model = tf.keras.models.load_model("kepler_window1024_base.keras")
+
+        # quick val prediction stats
+        y_true, y_pred = [], []
+        for Xb, yb in val_gen:
+            y_true.extend(yb.tolist())
+            y_pred.extend(np.asarray(best_model.predict_on_batch(Xb)).ravel().tolist())
+
+        y_true = np.asarray(y_true)
+        y_pred = np.asarray(y_pred)
+
+        print("VAL pred min/max/mean:", y_pred.min(), y_pred.max(), y_pred.mean())
+        print("VAL pos mean pred:", y_pred[y_true==1].mean())
+        print("VAL neg mean pred:", y_pred[y_true==0].mean())
