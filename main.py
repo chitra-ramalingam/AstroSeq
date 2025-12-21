@@ -57,7 +57,8 @@ def k2Processors():
     # from astropy.config import paths
     # print("Astropy cache:", paths.get_cache_dir())
     loader = K2Loader()
-    loader.callK2_LoadData()    
+    #loader.callK2_LoadData()    
+    loader.score_runner()   
 
 def largeWindowMain():
     largeWindowModel = LargeWindowCnnModel()
