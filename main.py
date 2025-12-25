@@ -1,7 +1,8 @@
 import re
 import shutil
 from pathlib import Path
-
+from src.Classifiers.Triages.AstroSeqTriageCandidate import AstroSeqCandidateTriage
+from src.Classifiers.Triages.K2_Score_loader import K2ScoreLoader
 import pandas as pd
 
 CSV_PATH = "k2_inference_scores.csv"
@@ -30,10 +31,8 @@ def main():
             #     cnnModel.runBinaryEmbeddingsClassifier()
         #largeWindowMain()
 
-
-
-
-       k2Processors()
+        #k2Processors()
+        triageCandidates()
 
 def k2Processors():
     # df = pd.read_csv("k2_inference_scores.csv")
@@ -67,7 +66,27 @@ def largeWindowMain():
     largeWindowModel.build_model(mission="k2", neg_pos_ratio=2,do_hard_neg=False)
 
 
+def triageCandidates():
+    # df_meta = pd.read_parquet("k2_segments_test.parquet")
+    # print("META rows:", df_meta.shape, "unique stars:", df_meta["star_id"].nunique())
+    # print(df_meta["star_id"].value_counts().head(10))
+    # df = pd.read_parquet("segments_all_W1024_S256_k2.parquet")
+    # print(df.shape, "unique stars:", df["star_id"].nunique())
+    # print(df.columns)
+    scorer = K2ScoreLoader(window_len=1024, quality_bitmask="none", cache_lightcurves=True)
+    triager = AstroSeqCandidateTriage(score_threshold=0.80, top_n=10)
+    
+    # Meta-only parquet path (your k2_segments_test.parquet etc)
+    tri_test = triager.meta_parquet_to_triage(
+        score_loader=scorer,
+        meta_parquet_path="segments_all_W1024_S256_k2.parquet",
+        keras_model_path="k2_window1024_base.keras",
+        split_name="test",
+        out_triage_path="k2_triage_test.csv",
+        on_bad_index="skip",
+    )
 
+    print(tri_test.head(20))
 
 if __name__ == "__main__":
     main()
