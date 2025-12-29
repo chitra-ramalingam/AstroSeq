@@ -333,6 +333,38 @@ B	(unknown)	0.8755	0.4492	0.1476	0.6278	815 / 31	0.03664	0.03664	0.5741	0.05824	
 C	(unknown)	0.7608	0.3810	0.1233	0.5187	(not printed)	(not printed)	(not printed)	0.5738	0.05492	—
 
 
+Above K2 results didnt work had to redo the entire K2 learning
+#Reason
+Failure: K2 segmentation mismatch
+
+Initially generated K2 segments with (start, end) that did not align with the light curve product used at inference/training time.
+
+Reconstructing windows from metadata produced input tensors with extremely high padding/zeros (often >95%), which made scores collapse and training meaningless.
+
+Root causes:
+
+mixing K2 products/provenances (K2 vs EVEREST/K2SFF/K2SC)
+
+changing cadence indexing via NaN removal / quality masking
+
+assuming start/end were time bounds when they were cadence indices (and vice versa)
+
+Fixes:
+
+added sanity checks: %zeros, mean abs, std, per-window “energy”
+
+filtered junk windows (zero_per_row > 0.5)
+
+enforced consistent EPIC ID normalization (EPIC_... vs digits)
+
+confirmed cache product naming (ktwo<epic>-c##_lc) and provenance
+
+aligned 2-channel input creation with training (raw normalized + flattened channel)
+
+Outcome:
+
+rebuilt K2 dataset + triage after enforcing product/index consistency.
+
 ## Keywords (for discoverability)
 
 exoplanet, transit, TESS, Kepler, K2, TOI, Lightkurve, MAST, 1D CNN, Inception ResNet, time series, astroinformatics, deep learning, astronomy, exoplanet detection, Python, TensorFlow

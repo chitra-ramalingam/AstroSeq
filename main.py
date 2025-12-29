@@ -1,9 +1,16 @@
 import re
 import shutil
 from pathlib import Path
-from src.Classifiers.Triages.AstroSeqTriageCandidate import AstroSeqCandidateTriage
-from src.Classifiers.Triages.K2_Score_loader import K2ScoreLoader
+import numpy as np
 import pandas as pd
+from src.Classifiers.K2.K2_PrintSets import K2_PrintSets
+
+from src.Classifiers.Triages.AstroSeqTriageCandidate import AstroSeqCandidateTriage
+from src.Classifiers.Triages.K2_Score_loader import K2ScoreLoader, SegmentFilterConfig
+import pandas as pd
+from src.Classifiers.K2.K2_Dataset_builder import K2SegmentDatasetBuilder, InjectionConfig, PreprocessConfig
+from src.Classifiers.K2.K2_trainer import K2TransitTrainerV2, TrainConfig
+from src.Classifiers.K2.K2CampaignSource import K2CampaignEpicSource
 
 CSV_PATH = "k2_inference_scores.csv"
 CACHE_DIR = Path("k2_cache")
@@ -32,7 +39,8 @@ def main():
         #largeWindowMain()
 
         #k2Processors()
-        triageCandidates()
+        #triageCandidates()
+        printValues()
 
 def k2Processors():
     # df = pd.read_csv("k2_inference_scores.csv")
@@ -55,6 +63,7 @@ def k2Processors():
     # print("Deleted truncated 64KB files:", bad)
     # from astropy.config import paths
     # print("Astropy cache:", paths.get_cache_dir())
+    ##################### This didnt really work, need abandon###########
     loader = K2Loader()
     #loader.callK2_LoadData()    
     loader.score_runner()   
@@ -67,26 +76,53 @@ def largeWindowMain():
 
 
 def triageCandidates():
-    # df_meta = pd.read_parquet("k2_segments_test.parquet")
-    # print("META rows:", df_meta.shape, "unique stars:", df_meta["star_id"].nunique())
-    # print(df_meta["star_id"].value_counts().head(10))
-    # df = pd.read_parquet("segments_all_W1024_S256_k2.parquet")
-    # print(df.shape, "unique stars:", df["star_id"].nunique())
-    # print(df.columns)
-    scorer = K2ScoreLoader(window_len=1024, quality_bitmask="none", cache_lightcurves=True)
-    triager = AstroSeqCandidateTriage(score_threshold=0.80, top_n=10)
-    
-    # Meta-only parquet path (your k2_segments_test.parquet etc)
-    tri_test = triager.meta_parquet_to_triage(
-        score_loader=scorer,
-        meta_parquet_path="segments_all_W1024_S256_k2.parquet",
-        keras_model_path="k2_window1024_base.keras",
-        split_name="test",
-        out_triage_path="k2_triage_test.csv",
-        on_bad_index="skip",
+    # epics = [
+    # "EPIC_206317286",
+    # "EPIC_206024342",
+    # "EPIC_211822797",
+    # # ...
+    # ]
+
+    src = K2CampaignEpicSource(campaign=5)
+    epics = src.fetch_epic_ids(prefix=True)   # ["EPIC_211822797", ...]
+    print("N EPICs:", len(epics))
+    print(epics[:20])
+
+
+    builder = K2SegmentDatasetBuilder(
+        out_dir="k2_dataset_v2",
+        window_len=1024,
+        stride=256,
+        preprocess_cfg=PreprocessConfig(use_flatten=True),
+        inject_cfg=InjectionConfig(enabled=True, positive_star_fraction=0.2),
     )
 
-    print(tri_test.head(20))
+    # Simple manual split for now (replace with your own splitter)
+    # train_ids = epics[: int(0.7 * len(epics))]
+    # val_ids   = epics[int(0.7 * len(epics)) : int(0.85 * len(epics))]
+    # test_ids  = epics[int(0.85 * len(epics)) :]
+
+    train_ids, val_ids, test_ids = builder.split_epics_min(epics)
+
+    builder.build_split(train_ids, "train")
+    builder.build_split(val_ids, "val")
+    builder.build_split(test_ids, "test")
+
+    #---------
+
+    trainer = K2TransitTrainerV2(TrainConfig(epochs=10, batch_size=256, lr=1e-3))
+
+    trainer.train(
+        "k2_dataset_v2/X_train.npy", "k2_dataset_v2/meta_train.parquet",
+        "k2_dataset_v2/X_val.npy",   "k2_dataset_v2/meta_val.parquet",
+        "k2_dataset_v2/X_test.npy",  "k2_dataset_v2/meta_test.parquet",
+        out_model_path="k2_window1024_v2.keras",
+    )
+
+def printValues():
+    printK2 = K2_PrintSets()
+    printK2.print_meta_test()
+    printK2.print_preds()
 
 if __name__ == "__main__":
     main()
