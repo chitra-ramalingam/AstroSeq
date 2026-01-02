@@ -11,7 +11,7 @@ class K2_PrintSets:
         pass
 
     def print_meta_test(self):
-        meta_test = pd.read_parquet("k2_dataset_v2/meta_test.parquet")
+        meta_test = pd.read_parquet("k2_dataset_centered_v2/meta_test.parquet")
         print("meta_test columns:", meta_test.columns.tolist())
 
         # Find the label column (common names)
@@ -32,12 +32,15 @@ class K2_PrintSets:
 
     def print_preds(self):
         
-        meta_test = pd.read_parquet("k2_dataset_v2/meta_test.parquet").reset_index(drop=True)
-        X_test = np.load("k2_dataset_v2/X_test.npy")
+        meta_test = pd.read_parquet("k2_dataset_centered_v2/meta_test.parquet").reset_index(drop=True)
+        X_test = np.load("k2_dataset_centered_v2/X_test.npy")
 
-        model = tf.keras.models.load_model("k2_window1024_v2.keras")
+        model = tf.keras.models.load_model("k2_window1024_centralized_v2.keras")
         p = model.predict(X_test, batch_size=256, verbose=1).reshape(-1)
-
+        y_seg = meta_test["label"].to_numpy().astype(int)
+        print("Segment baseline PR (pos frac):", y_seg.mean())
+        print("Segment PR-AUC:", average_precision_score(y_seg, p))
+        print("Segment ROC-AUC:", roc_auc_score(y_seg, p))
         meta_test["p"] = p
 
         # Star scores
@@ -59,10 +62,10 @@ class K2_PrintSets:
         print("Star PR-AUC (max):", average_precision_score(star_df["y_star"], star_df["score_max"]))
         print("Star PR-AUC (top10mean):", average_precision_score(star_df["y_star"], star_df["score_top10mean"]))
         
-        X_test = np.load("k2_dataset_v2/X_test.npy")
-        mtrain = pd.read_parquet("k2_dataset_v2/meta_train.parquet")
-        mval   = pd.read_parquet("k2_dataset_v2/meta_val.parquet")
-        mtest  = pd.read_parquet("k2_dataset_v2/meta_test.parquet")
+        X_test = np.load("k2_dataset_centered_v2/X_test.npy")
+        mtrain = pd.read_parquet("k2_dataset_centered_v2/meta_train.parquet")
+        mval   = pd.read_parquet("k2_dataset_centered_v2/meta_val.parquet")
+        mtest  = pd.read_parquet("k2_dataset_centered_v2/meta_test.parquet")
 
         s_train = set(mtrain["star_id"])
         s_val   = set(mval["star_id"])
@@ -72,46 +75,120 @@ class K2_PrintSets:
         print("train∩test:", len(s_train & s_test))
         print("val∩test:", len(s_val & s_test))
 
+        g = meta_test.groupby("star_id")["p"]
+
+        star_max = g.max()
+        star_top10mean = g.apply(lambda s: float(np.mean(np.sort(s)[-10:])))
+        star_median_top10 = g.apply(lambda s: float(np.median(np.sort(s)[-10:])))
+        star_consistency = g.apply(lambda s: float(np.mean(s > 0.6)))  # tune 0.6/0.65 later
+        star_gap = star_max - star_top10mean
+
+        star_y = meta_test.groupby("star_id")["label_star"].max().astype(int)
+
+        star_df = pd.DataFrame({
+            "y_star": star_y,
+            "score_max": star_max,
+            "score_top10mean": star_top10mean,
+            "score_median_top10": star_median_top10,
+            "consistency_gt_0p6": star_consistency,
+            "gap": star_gap,
+        }).reset_index()
+        star_df["score_fused"] = (
+                star_df["score_median_top10"]
+                + 0.10 * star_df["consistency_gt_0p6"]
+                - 0.20 * star_df["gap"]
+            )
+        print("Star PR-AUC (fused):", average_precision_score(star_df["y_star"], star_df["score_fused"]))
+
+
 
         star_hn = K2_StarRankedHardNegatives()
         star_hn.displayModel()
-        #self.precision(star_df)
-        #self.precision_after_hardnegs()
-        #self.hard_negatives(model)
+        self.precision(star_df)
+        self.precision_after_hardnegs()
+        self.hard_negatives(model)
+        meta_val = pd.read_parquet("k2_dataset_centered_v2/meta_val.parquet").reset_index(drop=True)
+        y_val = meta_val["label"].to_numpy().astype(int)
+        print("VAL label counts [neg,pos]:", [(y_val==0).sum(), (y_val==1).sum()])
+        print("VAL baseline PR (pos frac):", y_val.mean())
+
 
 
     def hard_negatives(self, model):
-        meta_train = pd.read_parquet("k2_dataset_v2/meta_train.parquet").reset_index(drop=True)
-        X_train = np.load("k2_dataset_v2/X_train.npy")
+        meta_train = pd.read_parquet("k2_dataset_centered_v2/meta_train.parquet").reset_index(drop=True)
+        X_train = np.load("k2_dataset_centered_v2/X_train.npy")
 
-        p_train = model.predict(X_train, batch_size=256, verbose=1).reshape(-1)
+        p_train = model.predict(X_train, batch_size=256, verbose=0).reshape(-1)
         meta_train["p"] = p_train
-        thr = 0.65
-        hn = meta_train[(meta_train["label"] == 0) & (meta_train["p"] > thr)] \
-        .sort_values("p", ascending=False)
+        meta_train = meta_train.copy()
+        meta_train["p"] = p_train
+
+        BANK_SIZE = 50000
+        PER_STAR_CAP = 30
+
+        neg0 = meta_train[(meta_train["label"]==0) & (meta_train["label_star"]==0)]
+        neg1 = meta_train[(meta_train["label"]==0) & (meta_train["label_star"]==1)]
+
+        hn = (neg0.sort_values("p", ascending=False)
+            .groupby("star_id", group_keys=False)
+            .head(PER_STAR_CAP)
+            .head(BANK_SIZE))
+        
+        hn = hn.sort_values("p", ascending=False)
+
+
+        print("HN bank:", len(hn),
+            "unique stars:", hn["star_id"].nunique(),
+            "p range:", float(hn["p"].min()), "to", float(hn["p"].max()),
+            "top star cap:", int(hn["star_id"].value_counts().iloc[0]))
+
+        print("Train neg candidates (y_star=0):", len(neg0), "max p:", float(neg0["p"].max()))
+        print("Train neg candidates (y_star=1):", len(neg1), "max p:", float(neg1["p"].max()))
+
+        #hn = meta_train[(meta_train["label"]==0) & (meta_train["label_star"]==0) & (meta_train["p"]>=thr)]
+        print("HN mined:", len(hn), "unique stars:", hn["star_id"].nunique())
+        print("HN top p:", float(hn["p"].max()) if len(hn) else None)
+
+        print("\nHN head:")
+        print(hn.sort_values("p", ascending=False).head(10)[["star_id","p","start","end","seg_mid_time"]])
 
         print("Hard negatives:", len(hn))
-        hn.head(20)[["star_id","p","start","end","seg_mid_time"]]
-        N = 50000  # start with 50k, tune later
-        hn_idx = hn.index.values[:N]
+        print(hn.head(20)[["star_id","p","start","end","seg_mid_time"]])
+        print("HN from y_star=1 stars:", int((hn["label_star"] == 1).sum()))
+        print("HN from y_star=0 stars:", int((hn["label_star"] == 0).sum()))
 
-        X_hn = X_train[hn_idx]
-        y_hn = np.zeros(len(hn_idx), dtype=np.int32)
-        meta_hn = meta_train.loc[hn_idx].copy()
+        BANK_N = 50000   # bank size saved to disk
+        hn_idx = hn.index.values[:BANK_N]
 
-        np.save("k2_dataset_v2/X_hardneg.npy", X_hn)
-        np.save("k2_dataset_v2/y_hardneg.npy", y_hn)
-        meta_hn.to_parquet("k2_dataset_v2/meta_hardneg.parquet", index=False)
+        X_hn_bank = X_train[hn_idx]
+        y_hn_bank = np.zeros(len(hn_idx), dtype=np.int32)
+        meta_hn_bank = meta_train.loc[hn_idx].copy()
 
-        print("Saved hard negative bank:", X_hn.shape)
+        TAKE = 10000     # or 20000 if stable
+        X_hn = X_hn_bank[:TAKE]
+        y_hn = y_hn_bank[:TAKE]
+        meta_hn = meta_hn_bank.iloc[:TAKE].copy()
+
+
+        np.save("k2_dataset_centered_v2/X_hardneg.npy", X_hn)
+        np.save("k2_dataset_centered_v2/y_hardneg.npy", y_hn)
+        meta_hn.to_parquet("k2_dataset_centered_v2/meta_hardneg.parquet", index=False)
+
+        np.save("k2_dataset_centered_v2/X_hardneg_bank.npy", X_hn_bank)   # 50k
+        meta_hn_bank.to_parquet("k2_dataset_centered_v2/meta_hardneg_bank.parquet", index=False)
+
+        np.save("k2_dataset_centered_v2/X_hardneg_take.npy", X_hn)        # 10k
+        meta_hn.to_parquet("k2_dataset_centered_v2/meta_hardneg_take.parquet", index=False)
+
+        print("Saved hardneg BANK:", X_hn_bank.shape, "TAKE:", X_hn.shape)
+
         star_df = pd.read_csv("k2_test_star_scores.csv")  # from your earlier step
-        fp = star_df[(star_df.y_star==0) & (star_df.score_top10mean > thr)] \
-                .sort_values("score_top10mean", ascending=False)
-        print("FP:", fp.head(30))
-        self.train_hardneg(model)
+       
+        print("p quantiles:", hn["p"].quantile([0.5,0.9,0.99]).to_dict())
+        self.train_hardneg(model,X_train, X_hn_bank, X_hn, meta_hn)
 
-    def train_hardneg(self, model):
-        model = tf.keras.models.load_model("k2_window1024_v2.keras", compile=False)
+    def train_hardneg(self, model, X_train, X_hn_bank, X_hn, meta_hn):
+        model = tf.keras.models.load_model("k2_window1024_centralized_v2.keras", compile=False)
         # model.summary()
         # print("------------- Summary Total params:", model.count_params())
 
@@ -125,12 +202,12 @@ class K2_PrintSets:
         # for v in model.trainable_variables[:30]:
         #     print(v.name, v.shape, v.dtype)
         # # Load base train
-        meta_train = pd.read_parquet("k2_dataset_v2/meta_train.parquet").reset_index(drop=True)
-        X_train = np.load("k2_dataset_v2/X_train.npy")
+        meta_train = pd.read_parquet("k2_dataset_centered_v2/meta_train.parquet").reset_index(drop=True)
+        X_train = np.load("k2_dataset_centered_v2/X_train.npy", mmap_mode="r")
         y_train = meta_train["label"].to_numpy().astype(np.int32)
 
         # Load hard negatives (y=0)
-        X_hn = np.load("k2_dataset_v2/X_hardneg.npy")
+        X_hn = np.load("k2_dataset_centered_v2/X_hardneg_take.npy")
         y_hn = np.zeros(len(X_hn), dtype=np.int32)
 
         # Combine
@@ -139,7 +216,7 @@ class K2_PrintSets:
 
         # Sample weights: make hard negatives "louder"
         w = np.ones(len(X_aug), dtype=np.float32)
-        w[len(X_train):] = 8.0   # try 5.0, 8.0, 10.0
+        w[len(X_train):] = 2.0   # try 5.0, 8.0, 10.0
 
 
         # Fine-tune gently
@@ -152,18 +229,22 @@ class K2_PrintSets:
                 ],
 
         )
+        print("Model:", model)
+        print("Bank size:", X_hn_bank.shape, "Take:", X_hn.shape)
+        print("Take p range:", float(meta_hn["p"].min()), "to", float(meta_hn["p"].max()))
+        print("Weights: base=1.0 hardneg=", float(w[len(X_train)]))
 
         model.fit(
             X_aug, y_aug,
             sample_weight=w,
             batch_size=256,
-            epochs=3,
-            validation_data=(np.load("k2_dataset_v2/X_val.npy"), pd.read_parquet("k2_dataset_v2/meta_val.parquet")["label"].to_numpy().astype(np.int32)),
+            epochs=2,
+            validation_data=(np.load("k2_dataset_centered_v2/X_val.npy"), pd.read_parquet("k2_dataset_centered_v2/meta_val.parquet")["label"].to_numpy().astype(np.int32)),
             verbose=1
         )
 
-        model.save("k2_window1024_v3_hardnegW8.keras")
-        print("Saved k2_window1024_v3_hardnegW8.keras")
+        model.save("k2_window1024_v3_hardnegW2.keras")
+        print("Saved k2_window1024_v3_hardnegW2.keras")
         print("Output shape:", model.output_shape)
         print("Last layer:", model.layers[-1].name, type(model.layers[-1]))
 
@@ -183,15 +264,20 @@ class K2_PrintSets:
     def precision_after_hardnegs(self):
         
         # Load test
-        meta_test = pd.read_parquet("k2_dataset_v2/meta_test.parquet").reset_index(drop=True)
-        X_test = np.load("k2_dataset_v2/X_test.npy")
+        meta_test = pd.read_parquet("k2_dataset_centered_v2/meta_test.parquet").reset_index(drop=True)
+        X_test = np.load("k2_dataset_centered_v2/X_test.npy")
         y_seg = meta_test["label"].to_numpy().astype(int)
 
         # Load model v3
         model = tf.keras.models.load_model("k2_window1024_v3_hardnegW8.keras")
         p = model.predict(X_test, batch_size=256, verbose=1).reshape(-1)
         meta_test["p"] = p
-
+        y_seg = meta_test["label"].to_numpy().astype(int)
+        base_pr = y_seg.mean()
+        print("Segment  baseline PR (pos frac):", base_pr)
+        print("Segment  PR-AUC:", average_precision_score(y_seg, p))
+        print("Segment  ROC-AUC:", roc_auc_score(y_seg, p))
+     
         # Segment metrics (sanity)
         print("Segment PR-AUC:", average_precision_score(y_seg, p))
         print("Segment ROC-AUC:", roc_auc_score(y_seg, p))
@@ -223,14 +309,13 @@ class K2_PrintSets:
         print(star_df.sort_values("score_top10mean", ascending=False).head(20))
 
         star_df.to_csv("k2_v3_star_scores.csv", index=False)
-        meta_test.to_parquet("k2_dataset_v2/k2_v3_meta_test_with_preds.parquet", index=False)
+        meta_test.to_parquet("k2_dataset_centered_v2/k2_v3_meta_test_with_preds.parquet", index=False)
         # top false-positive stars in test (or do this on train/val stars later)
         fp_stars = star_df[(star_df.y_star==0)].nlargest(200, "score_top10mean")["star_id"].tolist()
 
         # Look at which segments inside them are scoring high
         fp_segs = meta_test[meta_test["star_id"].isin(fp_stars)].sort_values("p", ascending=False).head(5000)
         print("segs scoring", fp_segs[["star_id","label","p","start","end","seg_mid_time"]].head(20))
-
         # ----------------- FInanly arrived ----------------- #
         # mined negatives you fed it were either:
         # not representative of the false positives that matter for star ranking, or

@@ -17,10 +17,10 @@ class K2_StarRankedHardNegatives:
         Saves the mined hard negatives to disk.
         """
         # Load v2 model (the one that still "reacts" strongly)
-        model = tf.keras.models.load_model("k2_window1024_v2.keras")
+        model = tf.keras.models.load_model("k2_window1024_centralized_v2.keras")
 
-        meta_train = pd.read_parquet("k2_dataset_v2/meta_train.parquet").reset_index(drop=True)
-        X_train = np.load("k2_dataset_v2/X_train.npy")
+        meta_train = pd.read_parquet("k2_dataset_centered_v2/meta_train.parquet").reset_index(drop=True)
+        X_train = np.load("k2_dataset_centered_v2/X_train.npy")
 
         p_train = model.predict(X_train, batch_size=256, verbose=1).reshape(-1)
         meta_train["p"] = p_train
@@ -48,8 +48,8 @@ class K2_StarRankedHardNegatives:
         X_hn = X_train[hn_idx]
         y_hn = np.zeros(len(hn_idx), dtype=np.int32)
 
-        np.save("X_hardneg_star.npy", X_hn)
-        hn.drop(columns=["p"]).to_parquet("k2_dataset_v2/meta_hardneg_star.parquet", index=False)
+        np.save("k2_dataset_centered_v2/X_hardneg_star.npy", X_hn)
+        hn.drop(columns=["p"]).to_parquet("k2_dataset_centered_v2/meta_hardneg_star.parquet", index=False)
 
         print("Saved star-hardneg bank:", X_hn.shape, "from", len(bad_stars), "stars")
         print("Top bad stars (train):")
@@ -62,7 +62,7 @@ class K2_StarRankedHardNegatives:
     def displayModel(self):
         
         # ---- paths ----
-        DATA_DIR = "k2_dataset_v2"
+        DATA_DIR = "k2_dataset_centered_v2"
         MODEL_PATH = "k2_window1024_v4_starHN_W3.keras"
 
         # ---- load test set ----
@@ -114,13 +114,13 @@ class K2_StarRankedHardNegatives:
 
     def create_model(self):
 
-        X_train = np.load("k2_dataset_v2/X_train.npy")
-        y_train = pd.read_parquet("k2_dataset_v2/meta_train.parquet")["label"].to_numpy().astype(np.int32)
+        X_train = np.load("k2_dataset_centered_v2/X_train.npy")
+        y_train = pd.read_parquet("k2_dataset_centered_v2/meta_train.parquet")["label"].to_numpy().astype(np.int32)
 
-        X_val = np.load("k2_dataset_v2/X_val.npy")
-        y_val = pd.read_parquet("k2_dataset_v2/meta_val.parquet")["label"].to_numpy().astype(np.int32)
+        X_val = np.load("k2_dataset_centered_v2/X_val.npy")
+        y_val = pd.read_parquet("k2_dataset_centered_v2/meta_val.parquet")["label"].to_numpy().astype(np.int32)
 
-        X_hn = np.load("X_hardneg_star.npy")
+        X_hn = np.load("k2_dataset_centered_v2/X_hardneg_star.npy")
         y_hn = np.zeros(len(X_hn), dtype=np.int32)
 
         X_aug = np.concatenate([X_train, X_hn], axis=0)
@@ -129,7 +129,7 @@ class K2_StarRankedHardNegatives:
         w = np.ones(len(X_aug), dtype=np.float32)
         w[len(X_train):] = 3.0   # start gentle
 
-        model = tf.keras.models.load_model("k2_window1024_v2.keras", compile=False)
+        model = tf.keras.models.load_model("k2_dataset_centered_v2.keras", compile=False)
         model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=3e-5),
             loss=tf.keras.losses.BinaryCrossentropy(from_logits=False),

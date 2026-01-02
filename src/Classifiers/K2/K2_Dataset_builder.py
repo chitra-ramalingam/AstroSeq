@@ -7,7 +7,7 @@ import time
 import numpy as np
 import pandas as pd
 import re
-
+from src.Classifiers.K2.K2_CentralizeTransits import K2_CentralizeSegmentTransit
 
 @dataclass
 class InjectionConfig:
@@ -83,47 +83,159 @@ class K2SegmentDatasetBuilder:
         self.verbose = bool(verbose)
 
         self._rng = np.random.default_rng(self.inj_cfg.rng_seed)
+        self.center_keep_frac = 0.2
+        self.min_dur_coverage = 0.6
+        self.k2CentralizedTransit = K2_CentralizeSegmentTransit()
 
     # -----------------------------
     # Public API
     # -----------------------------
-    def build_split(
-        self,
-        epic_ids: List[str],
-        split_name: str,
-    ) -> Tuple[Path, Path]:
+    def build_split(self, epic_ids: List[str], split_name: str) -> Tuple[Path, Path]:
         """
         Builds and saves one split.
         Returns (X_path, meta_path).
+
+        KEY CHANGE:
+        - Download+preprocess ONCE per star, cached to disk.
+        - Second phase reads cached arrays (fast, no network).
+        - Positive-star selection is persisted so reruns are deterministic.
         """
         split_name = str(split_name)
+        split_l = split_name.lower()
+
         X_path = self.out_dir / f"X_{split_name}.npy"
         meta_path = self.out_dir / f"meta_{split_name}.parquet"
-        force_at_least_one = split_name.lower() in ("train", "val")
-        # Decide which stars are injected positives
-        is_pos_star = self._choose_positive_stars(epic_ids, force_at_least_one=force_at_least_one) if self.inj_cfg.enabled else {sid: False for sid in epic_ids}
-        print("pos stars:", [k for k,v in is_pos_star.items() if v])
-        print("looping:", epic_ids)
 
-        # First pass: estimate total windows for memmap allocation
+        force_at_least_one = split_l.startswith(("train", "val"))
+
+        # --- cache dirs
+        cache_dir = self.out_dir / "_cache" / split_name
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # --- persist positive-star selection so reruns don’t reshuffle injected stars
+        posmap_path = self.out_dir / f"posstars_{split_name}.parquet"
+
+        epic_ids = list(epic_ids)
+        epic_ids_can = [self._canon_epic(s) for s in epic_ids]
+
+        if self.inj_cfg.enabled:
+            if posmap_path.exists():
+                dfp = pd.read_parquet(posmap_path)
+                is_pos_star = {str(r["sid_can"]): bool(r["is_pos"]) for _, r in dfp.iterrows()}
+            else:
+                is_pos_star = self._choose_positive_stars(epic_ids, force_at_least_one=force_at_least_one)
+                dfp = pd.DataFrame(
+                    {"sid_can": list(is_pos_star.keys()), "is_pos": [int(v) for v in is_pos_star.values()]}
+                )
+                dfp.to_parquet(posmap_path, index=False)
+        else:
+            is_pos_star = {sid_can: False for sid_can in epic_ids_can}
+
+        if self.verbose:
+            npos = sum(1 for v in is_pos_star.values() if v)
+            print(f"[{split_name}] pos_stars={npos}/{len(epic_ids_can)} (injection_enabled={self.inj_cfg.enabled})")
+            print(f"[{split_name}] caching to: {cache_dir}")
+
+        # -----------------------------
+        # PASS 1: cache per-star arrays + compute total windows
+        # -----------------------------
         total = 0
-        plan_rows: List[Tuple[str, int]] = []
-        for sid in epic_ids:
-            sid_can = self._canon_epic(sid)          # "EPIC_206317286" -> "206317286"
-            star_id_out = f"EPIC_{sid_can}"          # for meta/output only
-            # fetch using canonical (your _fetch_time_flux should query f"EPIC {sid_can}")
+        plan_rows: List[Dict[str, object]] = []
+
+        for sid_in in epic_ids:
+            sid_can = self._canon_epic(sid_in)          # digits only
+            star_id_out = f"EPIC_{sid_can}"
+
+            cache_npz = cache_dir / f"{star_id_out}.npz"
+
+            if cache_npz.exists():
+                # Use cached shapes (no download)
+                z = np.load(cache_npz, allow_pickle=True)
+                n_points = int(z["n_points"])
+                n_windows = self._count_windows(n_points)
+                prov = str(z["prov"])
+                label_star = int(z["label_star"])
+                has_inj = int(z["has_inj"])
+                total += n_windows
+                plan_rows.append(
+                    {
+                        "star_id": star_id_out,
+                        "cache": str(cache_npz),
+                        "n_windows": int(n_windows),
+                        "provenance": prov,
+                        "label_star": int(label_star),
+                        "has_inj": int(has_inj),
+                    }
+                )
+                continue
+
+            # Download + preprocess ONCE
             t, f, prov = self._fetch_time_flux(sid_can)
+            flux_p, time_p = self._preprocess(t, f)
 
-            f2, t2 = self._preprocess(t, f)
-            n_windows = self._count_windows(len(f2))
+            n_windows = self._count_windows(len(flux_p))
+            label_star = int(is_pos_star.get(sid_can, False))
 
-            plan_rows.append((star_id_out, n_windows))   # store consistent output id
+            has_inj = 0
+            t0 = np.nan
+            period = np.nan
+            dur_days = np.nan
+
+            if self.inj_cfg.enabled and label_star == 1:
+                flux_p, inj = self._inject_box_transits(time_p, flux_p)
+                has_inj = 1
+                t0 = float(inj["t0"])
+                period = float(inj["period"])
+                dur_days = float(inj["dur_days"])
+
+            # Cache (fast to reuse after timeout)
+            # NOTE: use np.savez (no compression) to keep it fast
+            np.savez(
+                cache_npz,
+                flux_p=flux_p.astype(np.float32, copy=False),
+                time_p=time_p.astype(np.float64, copy=False),
+                n_points=np.int64(len(flux_p)),
+                prov=np.array(prov, dtype=object),
+                label_star=np.int32(label_star),
+                has_inj=np.int32(has_inj),
+                t0=np.float64(t0),
+                period=np.float64(period),
+                dur_days=np.float64(dur_days),
+            )
+
             total += n_windows
+            plan_rows.append(
+                {
+                    "star_id": star_id_out,
+                    "cache": str(cache_npz),
+                    "n_windows": int(n_windows),
+                    "provenance": prov,
+                    "label_star": int(label_star),
+                    "has_inj": int(has_inj),
+                }
+            )
 
         if self.verbose:
             print(f"[{split_name}] Planned windows: {total} across {len(epic_ids)} stars")
 
-        # Allocate X (N, L, 2)
+        # If nothing planned, write empties (your existing behavior)
+        if total == 0:
+            X_empty = np.zeros((0, self.window_len, 2), dtype=np.float32)
+            X_written_path = self._safe_save_npy_overwrite_or_version(
+                target_path=X_path, arr=X_empty, split_name=split_name, retries=10, sleep_s=0.25
+            )
+            self._write_latest_pointer("X", split_name, X_written_path)
+
+            df_meta = pd.DataFrame(
+                columns=["star_id","mission","provenance","split","start","end","seg_mid_time","label","label_star"]
+            )
+            df_meta.to_parquet(meta_path, index=False)
+            self._write_latest_pointer("meta", split_name, meta_path)
+            return X_written_path, meta_path
+
+        # -----------------------------
+        # PASS 2: allocate X once + write from cached arrays (no network)
+        # -----------------------------
         X = np.lib.format.open_memmap(
             X_path, mode="w+", dtype=np.float32, shape=(total, self.window_len, 2)
         )
@@ -131,21 +243,24 @@ class K2SegmentDatasetBuilder:
         meta_records: List[Dict[str, object]] = []
         write_idx = 0
 
-        for sid, n_windows in plan_rows:
-            if n_windows == 0:
+        for row in plan_rows:
+            n_windows = int(row["n_windows"])
+            if n_windows <= 0:
                 continue
 
-            time, flux, prov = self._fetch_time_flux(sid)
-            flux_p, time_p = self._preprocess(time, flux)
+            star_id_out = str(row["star_id"])
+            prov = str(row["provenance"])
+            label_star = int(row["label_star"])
+            has_inj = int(row["has_inj"]) == 1
 
-            sid_can = self._canon_epic(sid)  # '206317286'
-            label_star = int(is_pos_star.get(sid_can, False))
-            if self.inj_cfg.enabled and label_star == 1:
-                flux_p, inj = self._inject_box_transits(time_p, flux_p)
-            else:
-                inj = None
+            z = np.load(str(row["cache"]), allow_pickle=True)
+            flux_p = z["flux_p"].astype(np.float32, copy=False)
+            time_p = z["time_p"].astype(np.float64, copy=False)
 
-            # Segment windows
+            t0 = float(z["t0"])
+            period = float(z["period"])
+            dur_days = float(z["dur_days"])
+
             for w in range(n_windows):
                 start = w * self.stride
                 end = start + self.window_len
@@ -153,27 +268,33 @@ class K2SegmentDatasetBuilder:
                 seg_flux = flux_p[start:end]
                 seg_time = time_p[start:end]
 
-                # channels: [flux, diff(flux)]
                 ch0 = seg_flux.astype(np.float32, copy=False)
                 ch1 = np.diff(ch0, prepend=ch0[:1]).astype(np.float32, copy=False)
+
                 X[write_idx, :, 0] = ch0
                 X[write_idx, :, 1] = ch1
 
                 seg_mid_time = float(np.nanmedian(seg_time)) if np.isfinite(seg_time).any() else np.nan
 
-                # Window label:
-                # - If injected: label=1 if any injected in-transit cadence falls inside this window
-                # - Else: label=0
-                if inj is not None:
-                    # inj["in_transit"] is boolean array on the full cadence grid
-                    in_tr = bool(np.any(inj["in_transit"][start:end]))
-                    label = int(in_tr)
+                if has_inj:
+                    seg_t0 = float(seg_time[0]) if np.isfinite(seg_time[0]) else float(np.nanmin(seg_time))
+                    seg_t1 = float(seg_time[-1]) if np.isfinite(seg_time[-1]) else float(np.nanmax(seg_time))
+
+                    label = self.k2CentralizedTransit.label_segment_centered(
+                        seg_t0=seg_t0,
+                        seg_t1=seg_t1,
+                        t0=t0,
+                        period=period,
+                        dur_days=dur_days,
+                        center_keep_frac=self.center_keep_frac,
+                        min_dur_coverage=self.min_dur_coverage,
+                    )
                 else:
                     label = 0
 
                 meta_records.append(
                     {
-                        "star_id": sid,
+                        "star_id": star_id_out,
                         "mission": "k2",
                         "provenance": prov,
                         "split": split_name,
@@ -184,72 +305,29 @@ class K2SegmentDatasetBuilder:
                         "label_star": int(label_star),
                     }
                 )
-
                 write_idx += 1
 
             if self.verbose:
-                print(f"[{split_name}] {sid}: windows={n_windows} pos_star={label_star}")
+                print(f"[{split_name}] {star_id_out}: windows={n_windows} pos_star={label_star}")
 
-        # Truncate if needed (should match, but safety)
+        # Safety truncate (shouldn't happen, but keep it)
         if write_idx != total:
             if self.verbose:
                 print(f"[{split_name}] Truncating X: wrote {write_idx} of planned {total}")
             X.flush()
             X = np.asarray(X[:write_idx], dtype=np.float32)
             np.save(X_path, X)
-            X_path = self.out_dir / f"X_{split_name}.npy"
 
-       # --- if nothing planned, save empty outputs and return early
-        # --- if nothing planned, save empty outputs and return early
-        if total == 0:
-            X_empty = np.zeros((0, self.window_len, 2), dtype=np.float32)
-
-            # Safely write X (stable name if possible, else versioned fallback)
-            X_written_path = self._safe_save_npy_overwrite_or_version(
-                target_path=X_path,
-                arr=X_empty,
-                split_name=split_name,
-                retries=10,
-                sleep_s=0.25,
-            )
-            self._write_latest_pointer("X", split_name, X_written_path)
-
-            # Save empty meta
-            df_meta = pd.DataFrame(
-                columns=[
-                    "star_id", "mission", "provenance", "split",
-                    "start", "end", "seg_mid_time",
-                    "label", "label_star",
-                ]
-            )
-            df_meta.to_parquet(meta_path, index=False)
-            self._write_latest_pointer("meta", split_name, meta_path)
-
-            if self.verbose:
-                print(f"[{split_name}] Saved: {X_written_path}  shape={X_empty.shape}")
-                print(f"[{split_name}] Saved: {meta_path} rows=0 pos_win=0")
-
-            return X_written_path, meta_path
-
-        # --- normal save path
         df_meta = pd.DataFrame(meta_records)
-
-        # guarantee columns exist even if meta_records was weird
-        for col in ["label", "label_star"]:
-            if col not in df_meta.columns:
-                df_meta[col] = np.array([], dtype=np.int32)
-
         df_meta.to_parquet(meta_path, index=False)
 
-        pos_win = int(df_meta["label"].sum()) if len(df_meta) > 0 else 0
-
         if self.verbose:
-            # avoid mmap reload problems: just print planned info
-            print(f"[{split_name}] Saved: {X_path}  shape={np.load(X_path, mmap_mode='r').shape}")
+            pos_win = int(df_meta["label"].sum()) if len(df_meta) else 0
+            # Avoid np.load(mmap_mode='r') here to reduce Windows file locking pain
+            print(f"[{split_name}] Saved: {X_path} shape=({write_idx}, {self.window_len}, 2)")
             print(f"[{split_name}] Saved: {meta_path} rows={len(df_meta)} pos_win={pos_win}")
 
         return X_path, meta_path
-
 
     # -----------------------------
     # Internal helpers
@@ -349,8 +427,12 @@ class K2SegmentDatasetBuilder:
                     continue
 
                 # If we ever get a collection, stitch it; otherwise keep single LC
-                lc = obj.stitch() if (hasattr(obj, "stitch") and not hasattr(obj, "flux")) else obj
-
+                lc = obj
+                if hasattr(obj, "stitch"):
+                    try:
+                        lc = obj.stitch()
+                    except Exception:
+                        lc = obj
                 time = np.asarray(lc.time.value, dtype=np.float64)  # days
                 flux = np.asarray(lc.flux.value, dtype=np.float32)  # keep NaNs
 
@@ -441,7 +523,14 @@ class K2SegmentDatasetBuilder:
         # We inject as a negative offset scaled by depth.
         y[in_transit] = y[in_transit] - float(depth)
 
-        return y.astype(np.float32), {"in_transit": in_transit}
+        return y.astype(np.float32), {
+            "in_transit": in_transit,
+            "t0": float(t0),
+            "period": float(P),
+            "dur_days": float(dur_days),
+            "depth": float(depth),
+        }
+
     
     def _write_latest_pointer(self, kind: str, split_name: str, path: Path) -> None:
         """

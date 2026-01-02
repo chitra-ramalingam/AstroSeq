@@ -87,36 +87,40 @@ def triageCandidates():
     epics = src.fetch_epic_ids(prefix=True)   # ["EPIC_211822797", ...]
     print("N EPICs:", len(epics))
     print(epics[:20])
-
+    dataDir ="k2_dataset_centered_v2"
 
     builder = K2SegmentDatasetBuilder(
-        out_dir="k2_dataset_v2",
+        out_dir=dataDir,
         window_len=1024,
         stride=256,
         preprocess_cfg=PreprocessConfig(use_flatten=True),
         inject_cfg=InjectionConfig(enabled=True, positive_star_fraction=0.2),
     )
 
-    # Simple manual split for now (replace with your own splitter)
-    # train_ids = epics[: int(0.7 * len(epics))]
-    # val_ids   = epics[int(0.7 * len(epics)) : int(0.85 * len(epics))]
-    # test_ids  = epics[int(0.85 * len(epics)) :]
-
+    
     train_ids, val_ids, test_ids = builder.split_epics_min(epics)
 
-    builder.build_split(train_ids, "train")
-    builder.build_split(val_ids, "val")
-    builder.build_split(test_ids, "test")
+    if Path(f"{dataDir}/X_train.npy").exists():
+        print("Dataset already exists, skipping build.")
+    else:
+        builder.build_split(train_ids, "train")
+        builder.build_split(val_ids, "val")
+        builder.build_split(test_ids, "test")
 
     #---------
+    for split in ["train", "val", "test"]:
+        m = pd.read_parquet(f"{dataDir}/meta_{split}.parquet")
+        n_pos = int(m["label"].sum())
+        n_tot = len(m)
+        print(split, "pos", n_pos, "tot", n_tot, "pos_frac", n_pos/n_tot)
 
-    trainer = K2TransitTrainerV2(TrainConfig(epochs=10, batch_size=256, lr=1e-3))
+    trainer = K2TransitTrainerV2(TrainConfig(epochs=10, batch_size=256, lr=3e-4))
 
     trainer.train(
-        "k2_dataset_v2/X_train.npy", "k2_dataset_v2/meta_train.parquet",
-        "k2_dataset_v2/X_val.npy",   "k2_dataset_v2/meta_val.parquet",
-        "k2_dataset_v2/X_test.npy",  "k2_dataset_v2/meta_test.parquet",
-        out_model_path="k2_window1024_v2.keras",
+        f"{dataDir}/X_train.npy", f"{dataDir}/meta_train.parquet",
+        f"{dataDir}/X_val.npy",   f"{dataDir}/meta_val.parquet",
+        f"{dataDir}/X_test.npy",  f"{dataDir}/meta_test.parquet",
+        out_model_path="k2_window1024_centralized_v2.keras",
     )
 
 def printValues():
