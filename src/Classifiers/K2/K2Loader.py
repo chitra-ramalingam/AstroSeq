@@ -12,6 +12,11 @@ from src.Classifiers.K2.K2CacheBuilder import K2CachedScorer
 log = logging.getLogger(__name__)
 matplotlib.use("Agg")
 
+##########################
+
+####### THis became a total void as had to redo this due to segment issues ####
+######### Redone on K2_DataSet_builder.py
+#################
 class K2Loader:
     def __init__(self):
         pass

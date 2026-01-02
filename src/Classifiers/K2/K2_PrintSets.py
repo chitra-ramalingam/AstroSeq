@@ -105,8 +105,13 @@ class K2_PrintSets:
         star_hn = K2_StarRankedHardNegatives()
         star_hn.displayModel()
         self.precision(star_df)
+        DO_MINE_HARDNEGS = True  
+        if DO_MINE_HARDNEGS:
+            self.hard_negatives(model)
+        else:
+            print("Skipping hard negative mining (using existing bank).")
         self.precision_after_hardnegs()
-        self.hard_negatives(model)
+
         meta_val = pd.read_parquet("k2_dataset_centered_v2/meta_val.parquet").reset_index(drop=True)
         y_val = meta_val["label"].to_numpy().astype(int)
         print("VAL label counts [neg,pos]:", [(y_val==0).sum(), (y_val==1).sum()])
@@ -244,6 +249,8 @@ class K2_PrintSets:
         )
 
         model.save("k2_window1024_v3_hardnegW2.keras")
+        self.print_eval_report("k2_window1024_v3_hardnegW2.keras")
+
         print("Saved k2_window1024_v3_hardnegW2.keras")
         print("Output shape:", model.output_shape)
         print("Last layer:", model.layers[-1].name, type(model.layers[-1]))
@@ -269,7 +276,7 @@ class K2_PrintSets:
         y_seg = meta_test["label"].to_numpy().astype(int)
 
         # Load model v3
-        model = tf.keras.models.load_model("k2_window1024_v3_hardnegW8.keras")
+        model = tf.keras.models.load_model("k2_window1024_v3_hardnegW2.keras")
         p = model.predict(X_test, batch_size=256, verbose=1).reshape(-1)
         meta_test["p"] = p
         y_seg = meta_test["label"].to_numpy().astype(int)
@@ -320,3 +327,55 @@ class K2_PrintSets:
         # mined negatives you fed it were either:
         # not representative of the false positives that matter for star ranking, or
         # too few / too heavily weighted, causing calibration shrink without learning discriminative features.
+
+    def print_eval_report(self, model_path: str):
+
+        # Load splits
+        meta_val  = pd.read_parquet("k2_dataset_centered_v2/meta_val.parquet").reset_index(drop=True)
+        X_val     = np.load("k2_dataset_centered_v2/X_val.npy")
+
+        meta_test = pd.read_parquet("k2_dataset_centered_v2/meta_test.parquet").reset_index(drop=True)
+        X_test    = np.load("k2_dataset_centered_v2/X_test.npy")
+
+        model = tf.keras.models.load_model(model_path)
+
+        def eval_split(name, X, meta):
+            p = model.predict(X, batch_size=256, verbose=0).ravel()
+            y = meta["label"].to_numpy().astype(int)
+            print(f"\n[{name}] baseline PR:", float(y.mean()))
+            print(f"[{name}] PR-AUC:", float(average_precision_score(y, p)))
+            print(f"[{name}] ROC-AUC:", float(roc_auc_score(y, p)))
+            print(f"[{name}] p range:", float(p.min()), "to", float(p.max()), "mean:", float(p.mean()))
+            return p
+
+        print("\nEvaluating:", model_path)
+        p_val  = eval_split("VAL",  X_val,  meta_val)
+        p_test = eval_split("TEST", X_test, meta_test)
+
+        # Star-level aggregation on TEST
+        mt = meta_test.copy()
+        mt["p"] = p_test
+
+        g = mt.groupby("star_id")["p"]
+        star_df = (pd.DataFrame({
+            "star_id": g.size().index,
+            "y_star": mt.groupby("star_id")["label_star"].max().astype(int).values,
+            "score_max": g.max().values,
+            "score_top10mean": g.apply(lambda s: float(np.mean(np.sort(s)[-10:]))).values,
+            "score_median_top10": g.apply(lambda s: float(np.median(np.sort(s)[-10:]))).values,
+        }))
+
+        print("\nStar PR-AUC (max):", float(average_precision_score(star_df["y_star"], star_df["score_max"])))
+        print("Star PR-AUC (top10mean):", float(average_precision_score(star_df["y_star"], star_df["score_top10mean"])))
+        print("Star PR-AUC (median_top10):", float(average_precision_score(star_df["y_star"], star_df["score_median_top10"])))
+
+        base = float(star_df["y_star"].mean())
+        for k in [50, 100, 200, 500, 1000]:
+            pk = float(star_df.nlargest(k, "score_top10mean")["y_star"].mean())
+            print(k, "precision", round(pk, 3), "lift", round(pk / base, 2))
+
+        print("\nTop 20 stars:")
+        print(star_df.sort_values("score_top10mean", ascending=False).head(20))
+
+        star_df.to_csv("k2_v3_star_scores.csv", index=False)
+        mt.to_parquet("k2_dataset_centered_v2/k2_v3_meta_test_with_preds.parquet", index=False)

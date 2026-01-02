@@ -83,8 +83,8 @@ class K2SegmentDatasetBuilder:
         self.verbose = bool(verbose)
 
         self._rng = np.random.default_rng(self.inj_cfg.rng_seed)
-        self.center_keep_frac = 0.2
-        self.min_dur_coverage = 0.6
+        self.center_keep_frac = 0.15
+        self.min_dur_coverage = 0.7
         self.k2CentralizedTransit = K2_CentralizeSegmentTransit()
 
     # -----------------------------

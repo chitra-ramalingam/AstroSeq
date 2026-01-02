@@ -5,7 +5,8 @@ from urllib.parse import urlencode, quote_plus
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
-
+###############This is a testing class ============
+############ Not used
 class K2Loader:
     def __init__(self, tap_url: str = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"):
         self.tap_url = tap_url

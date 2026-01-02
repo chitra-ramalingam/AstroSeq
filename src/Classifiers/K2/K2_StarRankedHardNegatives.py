@@ -56,7 +56,7 @@ class K2_StarRankedHardNegatives:
         print(star_df[star_df["star_id"].isin(bad_stars)].head(10))
 
 
-        #self.create_model()
+        #self.load_model()
         #self.displayModel()
 
     def displayModel(self):
@@ -112,7 +112,7 @@ class K2_StarRankedHardNegatives:
         print("Saved: k2_v4_star_scores.csv, k2_v4_meta_test_with_preds.parquet")
 
 
-    def create_model(self):
+    def load_model(self):
 
         X_train = np.load("k2_dataset_centered_v2/X_train.npy")
         y_train = pd.read_parquet("k2_dataset_centered_v2/meta_train.parquet")["label"].to_numpy().astype(np.int32)

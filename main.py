@@ -11,7 +11,7 @@ import pandas as pd
 from src.Classifiers.K2.K2_Dataset_builder import K2SegmentDatasetBuilder, InjectionConfig, PreprocessConfig
 from src.Classifiers.K2.K2_trainer import K2TransitTrainerV2, TrainConfig
 from src.Classifiers.K2.K2CampaignSource import K2CampaignEpicSource
-
+from src.Classifiers.K2.Analysis.K2_PrintAnalysis import K2_PrintAnalysis
 CSV_PATH = "k2_inference_scores.csv"
 CACHE_DIR = Path("k2_cache")
 
@@ -37,12 +37,18 @@ def main():
             #     #-------- Binary classifier on top of star embeddings
             #     cnnModel.runBinaryEmbeddingsClassifier()
         #largeWindowMain()
-
-        #k2Processors()
+        
         #triageCandidates()
-        printValues()
+        #printValues()
+        K2_Analysis()
 
+
+def K2_ModelCreationAndTraining_Printing():
+    triageCandidates()
+    printValues()
+     
 def k2Processors():
+        #############Not used after lots issues needs abandoning
     # df = pd.read_csv("k2_inference_scores.csv")
     # err = df[df["status"].astype(str).str.lower() == "error"]
 
@@ -100,12 +106,12 @@ def triageCandidates():
     
     train_ids, val_ids, test_ids = builder.split_epics_min(epics)
 
-    if Path(f"{dataDir}/X_train.npy").exists():
-        print("Dataset already exists, skipping build.")
-    else:
-        builder.build_split(train_ids, "train")
-        builder.build_split(val_ids, "val")
-        builder.build_split(test_ids, "test")
+    # if Path(f"{dataDir}/X_train.npy").exists():
+    #     print("Dataset already exists, skipping build.")
+    # else:
+    builder.build_split(train_ids, "train")
+    builder.build_split(val_ids, "val")
+    builder.build_split(test_ids, "test")
 
     #---------
     for split in ["train", "val", "test"]:
@@ -127,6 +133,14 @@ def printValues():
     printK2 = K2_PrintSets()
     printK2.print_meta_test()
     printK2.print_preds()
+    #printK2.print_eval_report("k2_window1024_v3_hardnegW2.keras")
+
+def K2_Analysis() :
+     k2Analy = K2_PrintAnalysis()
+     model_path = "k2_w1024_c05_center015_cov070_base.keras"
+     k2Analy.print_eval_report(model_path)
+     k2Analy.save_galleries(model_path=model_path, split="test", n=25)
+
 
 if __name__ == "__main__":
     main()

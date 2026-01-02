@@ -367,8 +367,6 @@ rebuilt K2 dataset + triage after enforcing product/index consistency.
 
 K2 phase fold
 
-
-
 ## Keywords (for discoverability)
 
 exoplanet, transit, TESS, Kepler, K2, TOI, Lightkurve, MAST, 1D CNN, Inception ResNet, time series, astroinformatics, deep learning, astronomy, exoplanet detection, Python, TensorFlow
