@@ -40,12 +40,13 @@ def main():
         
         #triageCandidates()
         #printValues()
-        K2_Analysis()
+        #K2_Analysis()
+        K2_ModelCreationAndTraining_Printing()
 
 
 def K2_ModelCreationAndTraining_Printing():
     triageCandidates()
-    printValues()
+    #printValues()
      
 def k2Processors():
         #############Not used after lots issues needs abandoning
@@ -93,14 +94,15 @@ def triageCandidates():
     epics = src.fetch_epic_ids(prefix=True)   # ["EPIC_211822797", ...]
     print("N EPICs:", len(epics))
     print(epics[:20])
-    dataDir ="k2_dataset_centered_v2"
+    dataDir ="k2_dataset_centered_v3"
 
     builder = K2SegmentDatasetBuilder(
         out_dir=dataDir,
-        window_len=1024,
-        stride=256,
+        window_len=512,
+        stride=128,
         preprocess_cfg=PreprocessConfig(use_flatten=True),
-        inject_cfg=InjectionConfig(enabled=True, positive_star_fraction=0.2),
+        inject_cfg=InjectionConfig(enabled=True,
+                                    positive_star_fraction=0.2),
     )
 
     
@@ -109,9 +111,9 @@ def triageCandidates():
     # if Path(f"{dataDir}/X_train.npy").exists():
     #     print("Dataset already exists, skipping build.")
     # else:
-    builder.build_split(train_ids, "train")
-    builder.build_split(val_ids, "val")
-    builder.build_split(test_ids, "test")
+    #builder.build_split(train_ids, "train")
+    #builder.build_split(val_ids, "val")
+    #builder.build_split(test_ids, "test")
 
     #---------
     for split in ["train", "val", "test"]:
@@ -120,13 +122,13 @@ def triageCandidates():
         n_tot = len(m)
         print(split, "pos", n_pos, "tot", n_tot, "pos_frac", n_pos/n_tot)
 
-    trainer = K2TransitTrainerV2(TrainConfig(epochs=10, batch_size=256, lr=3e-4))
+    trainer = K2TransitTrainerV2(TrainConfig(epochs=10, batch_size=256, lr=1e-4))
 
     trainer.train(
-        f"{dataDir}/X_train.npy", f"{dataDir}/meta_train.parquet",
-        f"{dataDir}/X_val.npy",   f"{dataDir}/meta_val.parquet",
-        f"{dataDir}/X_test.npy",  f"{dataDir}/meta_test.parquet",
-        out_model_path="k2_window1024_centralized_v2.keras",
+        f"{dataDir}/X_train.npy", f"{dataDir}/meta_train_relabel.parquet",
+        f"{dataDir}/X_val.npy",   f"{dataDir}/meta_val_relabel.parquet",
+        f"{dataDir}/X_test.npy",  f"{dataDir}/meta_test_relabel.parquet",
+        out_model_path="k2_scan_w512_s128_v3.keras",
     )
 
 def printValues():
@@ -136,10 +138,45 @@ def printValues():
     #printK2.print_eval_report("k2_window1024_v3_hardnegW2.keras")
 
 def K2_Analysis() :
-     k2Analy = K2_PrintAnalysis()
-     model_path = "k2_w1024_c05_center015_cov070_base.keras"
-     k2Analy.print_eval_report(model_path)
-     k2Analy.save_galleries(model_path=model_path, split="test", n=25)
+    MODEL = "k2_w1024_c05_center015_cov070_base.keras"
+    DATA = "k2_dataset_centered_v2"
+
+    k2Analy = K2_PrintAnalysis()
+    model_path = MODEL
+    #k2Analy.print_eval_report(model_path)
+    #k2Analy.save_galleries(MODEL, split="test", mode="stacked", downsample=4, n=25)
+    #k2Analy.save_galleries(MODEL, split="test", mode="single", channel=0, downsample=4, n=25)
+    #k2Analy.save_galleries(MODEL, split="test", mode="single", channel=1, downsample=4, n=25)
+    # k2Analy.save_galleries(
+    # model_path=model_path,
+    # split="test",
+    # plot_mode="stacked",   # best for 2-channel debugging
+    # n=25,
+    # )
+   
+  
+    #k2Analy.plot_star_top_windows(MODEL, DATA, "EPIC_212160557", out_png="galleries/badboy_EPIC_212160557.png")
+    #k2Analy.plot_star_top_windows(MODEL, DATA, "EPIC_228682495", out_png="galleries/hero_EPIC_228682495.png")
+    k2Analy.furtherPrints("k2_dataset_centered_v2/X_test.npy", "k2_dataset_centered_v2/meta_test.parquet")
+    k2Analy.save_galleries(
+    model_path=model_path,
+    data_dir=DATA,
+    out_dir="galleries",
+    split="val",
+    mode="ch1",
+    bin=8,
+    center_frac=0.35,   # try this; it makes “centered transit” actually visible
+    )
+    k2Analy.save_galleries(
+        model_path=model_path,
+        out_dir="galaries",
+        split="test",
+        mode="ch1",
+        bin=8,
+        center_frac=0.35
+    )
+
+
 
 
 if __name__ == "__main__":

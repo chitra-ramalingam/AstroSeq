@@ -59,7 +59,7 @@ class K2SegmentDatasetBuilder:
     def __init__(
         self,
         out_dir: str | Path,
-        window_len: int = 1024,
+        window_len: int = 512,
         stride: int = 256,
         quality_bitmask: str = "none",
         provenance_priority: Tuple[str, ...] = ("K2", "EVEREST", "K2SFF"),
@@ -107,9 +107,9 @@ class K2SegmentDatasetBuilder:
         meta_path = self.out_dir / f"meta_{split_name}.parquet"
 
         force_at_least_one = split_l.startswith(("train", "val"))
-
+        cache_folder = Path("k2_dataset_centered_v2")
         # --- cache dirs
-        cache_dir = self.out_dir / "_cache" / split_name
+        cache_dir =  cache_folder / "_cache" / split_name
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         # --- persist positive-star selection so reruns don’t reshuffle injected stars

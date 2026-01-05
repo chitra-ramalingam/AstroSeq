@@ -95,9 +95,12 @@ class BuilderHelper:
 
         return df
     
-    def declareHigherDimModel(self,w, channels=1):
+    def declareHigherDimModel(self,w, channels=1, lr = 3e-4, 
+                              dropout=0.5, label_smoothing=None ):
 
         inputs = layers.Input(shape=(w, channels))
+        opt = tf.keras.optimizers.Adam(learning_rate=lr, clipnorm=1.0)
+        loss = tf.keras.losses.BinaryCrossentropy(label_smoothing=label_smoothing or 0.0)
 
         x = layers.Conv1D(64, 11, padding='same', activation='relu')(inputs)
         x = layers.BatchNormalization()(x)
@@ -113,17 +116,54 @@ class BuilderHelper:
 
         x = layers.Conv1D(128, 3, padding='same', activation='relu', dilation_rate=4)(x)
         x = layers.GlobalAveragePooling1D()(x)
-        x = layers.Dropout(0.5)(x)
+        x = layers.Dropout(dropout)(x)
         outputs = layers.Dense(1, activation='sigmoid')(x)
         model = models.Model(inputs, outputs)
         model.compile(
-        optimizer=tf.keras.optimizers.Adam(3e-4),
-        loss=tf.keras.losses.BinaryCrossentropy(),
+        optimizer=opt,
+        loss=loss,
         metrics=[
             tf.keras.metrics.AUC(curve="ROC", name="roc_auc"),
             tf.keras.metrics.AUC(curve="PR", name="pr_auc"),
                 ],
             )
+        return model
+
+    def declareLayerNormalizedModel(self,w, channels=1, lr = 3e-4, 
+                              dropout=0.5, label_smoothing=None ):
+
+        inputs = layers.Input(shape=(w, channels))
+
+        x = layers.Conv1D(64, 11, padding="same", activation="relu")(inputs)
+        x = layers.LayerNormalization()(x)
+        x = layers.MaxPooling1D(2)(x)
+
+        x = layers.Conv1D(128, 7, padding="same", activation="relu")(x)
+        x = layers.LayerNormalization()(x)
+        x = layers.MaxPooling1D(2)(x)
+
+        x = layers.Conv1D(128, 5, padding="same", activation="relu", dilation_rate=2)(x)
+        x = layers.LayerNormalization()(x)
+        x = layers.MaxPooling1D(2)(x)
+
+        x = layers.Conv1D(128, 3, padding="same", activation="relu", dilation_rate=4)(x)
+        x = layers.GlobalAveragePooling1D()(x)
+        x = layers.Dropout(dropout)(x)
+
+        outputs = layers.Dense(1, activation="sigmoid")(x)
+
+        model = models.Model(inputs, outputs)
+        opt = tf.keras.optimizers.Adam(learning_rate=lr, clipnorm=1.0)
+        loss = tf.keras.losses.BinaryCrossentropy(label_smoothing=label_smoothing)
+
+        model.compile(
+            optimizer=opt,
+            loss=loss,
+            metrics=[
+                tf.keras.metrics.AUC(curve="ROC", name="roc_auc"),
+                tf.keras.metrics.AUC(curve="PR", name="pr_auc"),
+            ],
+        )
         return model
 
 
