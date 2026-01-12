@@ -94,7 +94,7 @@ def triageCandidates():
     epics = src.fetch_epic_ids(prefix=True)   # ["EPIC_211822797", ...]
     print("N EPICs:", len(epics))
     print(epics[:20])
-    dataDir ="k2_dataset_centered_v3"
+    dataDir ="k2_dataset_centered_v4"
 
     builder = K2SegmentDatasetBuilder(
         out_dir=dataDir,
@@ -104,16 +104,25 @@ def triageCandidates():
         inject_cfg=InjectionConfig(enabled=True,
                                     positive_star_fraction=0.2),
     )
+    builder.max_products_per_star = 1
+    #builder.download_dir = None  # or point to your existing Lightkurve cache root
+    builder.remote_timeout = 120
 
-    
-    train_ids, val_ids, test_ids = builder.split_epics_min(epics)
+    epics_small = epics[:3000]  # or 1000 if you feel brave
+
+    train_ids, val_ids, test_ids = builder.split_epics_min(epics_small)
 
     # if Path(f"{dataDir}/X_train.npy").exists():
     #     print("Dataset already exists, skipping build.")
     # else:
-    #builder.build_split(train_ids, "train")
-    #builder.build_split(val_ids, "val")
-    #builder.build_split(test_ids, "test")
+    builder.build_split(train_ids, "train")
+    builder.build_split(val_ids, "val")
+    builder.build_split(test_ids, "test")
+    for split in ["train", "val", "test"]:
+        m = pd.read_parquet(f"{dataDir}/meta_{split}.parquet")
+        n_pos = int(m["label"].sum())
+        n_tot = len(m)
+        print(split, "pos", n_pos, "tot", n_tot, "pos_frac", n_pos/n_tot)
 
     #---------
     for split in ["train", "val", "test"]:
@@ -122,14 +131,23 @@ def triageCandidates():
         n_tot = len(m)
         print(split, "pos", n_pos, "tot", n_tot, "pos_frac", n_pos/n_tot)
 
-    trainer = K2TransitTrainerV2(TrainConfig(epochs=10, batch_size=256, lr=1e-4))
+    for seed in [42, 43, 44, 45, 46]:
+        trainer = K2TransitTrainerV2(
+            TrainConfig(
+                epochs=50,          # 50 is enough with EarlyStopping
+                batch_size=256,
+                lr=1e-4,
+                seed=seed,
+                crop_len=None,      # keep the “no-crop” baseline
+            )
+        )
 
-    trainer.train(
-        f"{dataDir}/X_train.npy", f"{dataDir}/meta_train_relabel.parquet",
-        f"{dataDir}/X_val.npy",   f"{dataDir}/meta_val_relabel.parquet",
-        f"{dataDir}/X_test.npy",  f"{dataDir}/meta_test_relabel.parquet",
-        out_model_path="k2_scan_w512_s128_v3.keras",
-    )
+        trainer.train(
+            f"{dataDir}/X_train.npy", f"{dataDir}/meta_train.parquet",
+            f"{dataDir}/X_val.npy",   f"{dataDir}/meta_val.parquet",
+            f"{dataDir}/X_test.npy",  f"{dataDir}/meta_test.parquet",
+            out_model_path=f"models/k2_nocrop_flux_seed{seed}.keras",
+        )
 
 def printValues():
     printK2 = K2_PrintSets()

@@ -1,59 +1,72 @@
 from __future__ import annotations
+
 import os
+import time
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
-import time
+
 import numpy as np
 import pandas as pd
-import re
+
 from src.Classifiers.K2.K2_CentralizeTransits import K2_CentralizeSegmentTransit
+
 
 @dataclass
 class InjectionConfig:
     """
-    Simple box-transit injection config (self-contained, no batman needed).
+    Simple box-transit injection config (self-contained).
     """
     enabled: bool = True
     rng_seed: int = 42
 
-    # Choose random transit parameters per star
     period_days_range: Tuple[float, float] = (0.7, 20.0)
     duration_hours_range: Tuple[float, float] = (1.0, 6.0)
     depth_ppm_range: Tuple[float, float] = (200.0, 4000.0)  # 200 ppm to 4000 ppm
-    # How many injected stars (positives) to create within a split
+
+    # Fraction of stars to inject (positives)
     positive_star_fraction: float = 0.50
 
 
 @dataclass
 class PreprocessConfig:
     """
-    Keep length stable. Do NOT drop NaNs.
+    Length-preserving preprocessing.
+    - Flatten first (optional)
+    - Convert to relative flux ~1.0
+    - Inject happens on relative flux
+    - Normalize AFTER injection to robust scale
     """
     use_flatten: bool = True
     flatten_window_length: int = 401
     flatten_polyorder: int = 2
 
-    # After preprocessing, normalize to robust scale
+    # Convert to relative flux around 1.0 (if flatten fails / raw flux)
+    force_relative_flux: bool = True
+
+    # After injection, normalize to robust scale for ML
     robust_center: bool = True
+    use_mad_scale: bool = True  # recommended
+    clip_sigma: Optional[float] = 10.0  # clip after standardization (None disables)
+
     fill_nonfinite_with_zero: bool = True
 
 
 class K2SegmentDatasetBuilder:
     """
-    Builds a K2 dataset from scratch and SAVES REAL WINDOW VECTORS.
+    Builds a K2 dataset and saves window vectors.
 
     Output per split:
-      - X_<split>.npy          float32 array shape (N, 1024, 2)
-      - meta_<split>.parquet   dataframe with star_id, seg_mid_time, label, etc.
+      - X_<split>.npy          float32 shape (N, window_len, 2)
+      - meta_<split>.parquet   rows per window
 
     Labeling:
-      - If you don't have a reliable catalog, use injection positives.
-      - This creates real "transit-like dips" and gives you ground-truth labels.
+      - injection positives (ground truth by construction)
 
     Notes:
-      - Uses Lightkurve for download.
-      - Uses quality_bitmask="none" so cadence grid doesn't get silently shortened.
+      - Uses Lightkurve for download
+      - Uses quality_bitmask="none" to avoid silent length changes
     """
 
     def __init__(
@@ -83,6 +96,8 @@ class K2SegmentDatasetBuilder:
         self.verbose = bool(verbose)
 
         self._rng = np.random.default_rng(self.inj_cfg.rng_seed)
+
+        # labeling knobs (your centered labeler)
         self.center_keep_frac = 0.15
         self.min_dur_coverage = 0.7
         self.k2CentralizedTransit = K2_CentralizeSegmentTransit()
@@ -95,10 +110,10 @@ class K2SegmentDatasetBuilder:
         Builds and saves one split.
         Returns (X_path, meta_path).
 
-        KEY CHANGE:
-        - Download+preprocess ONCE per star, cached to disk.
-        - Second phase reads cached arrays (fast, no network).
-        - Positive-star selection is persisted so reruns are deterministic.
+        Workflow:
+        - Cache per-star arrays to disk.
+        - Second pass reads cached arrays (no network).
+        - Positive-star selection persisted for determinism.
         """
         split_name = str(split_name)
         split_l = split_name.lower()
@@ -107,12 +122,13 @@ class K2SegmentDatasetBuilder:
         meta_path = self.out_dir / f"meta_{split_name}.parquet"
 
         force_at_least_one = split_l.startswith(("train", "val"))
-        cache_folder = Path("k2_dataset_centered_v2")
-        # --- cache dirs
-        cache_dir =  cache_folder / "_cache" / split_name
+
+        # NOTE: keep using your cache folder; change if we want a new version
+        cache_folder = Path("k2_dataset_centered_v4")
+        cache_dir = cache_folder / "_cache" / split_name
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # --- persist positive-star selection so reruns don’t reshuffle injected stars
+        # persist positive-star selection
         posmap_path = self.out_dir / f"posstars_{split_name}.parquet"
 
         epic_ids = list(epic_ids)
@@ -149,7 +165,6 @@ class K2SegmentDatasetBuilder:
             cache_npz = cache_dir / f"{star_id_out}.npz"
 
             if cache_npz.exists():
-                # Use cached shapes (no download)
                 z = np.load(cache_npz, allow_pickle=True)
                 n_points = int(z["n_points"])
                 n_windows = self._count_windows(n_points)
@@ -169,27 +184,33 @@ class K2SegmentDatasetBuilder:
                 )
                 continue
 
-            # Download + preprocess ONCE
-            t, f, prov = self._fetch_time_flux(sid_can)
-            flux_p, time_p = self._preprocess(t, f)
+            # Download ONCE
+            t_raw, f_raw, prov = self._fetch_time_flux(sid_can)
 
-            n_windows = self._count_windows(len(flux_p))
+            # 1) Flatten + relative flux (length-preserving)
+            time_p, flux_rel = self._flatten_and_relative(time=t_raw, flux=f_raw)
+
+            # 2) Choose star label
+            n_windows = self._count_windows(len(flux_rel))
             label_star = int(is_pos_star.get(sid_can, False))
 
+            # 3) Inject on RELATIVE flux (around 1.0), then normalize AFTER injection
             has_inj = 0
             t0 = np.nan
             period = np.nan
             dur_days = np.nan
 
             if self.inj_cfg.enabled and label_star == 1:
-                flux_p, inj = self._inject_box_transits(time_p, flux_p)
+                flux_rel, inj = self._inject_box_transits(time_p, flux_rel)
                 has_inj = 1
                 t0 = float(inj["t0"])
                 period = float(inj["period"])
                 dur_days = float(inj["dur_days"])
 
-            # Cache (fast to reuse after timeout)
-            # NOTE: use np.savez (no compression) to keep it fast
+            # 4) Final standardize (robust) for ML
+            flux_p = self._standardize_flux(flux_rel)
+
+            # Cache to disk
             np.savez(
                 cache_npz,
                 flux_p=flux_p.astype(np.float32, copy=False),
@@ -218,7 +239,6 @@ class K2SegmentDatasetBuilder:
         if self.verbose:
             print(f"[{split_name}] Planned windows: {total} across {len(epic_ids)} stars")
 
-        # If nothing planned, write empties (your existing behavior)
         if total == 0:
             X_empty = np.zeros((0, self.window_len, 2), dtype=np.float32)
             X_written_path = self._safe_save_npy_overwrite_or_version(
@@ -227,7 +247,7 @@ class K2SegmentDatasetBuilder:
             self._write_latest_pointer("X", split_name, X_written_path)
 
             df_meta = pd.DataFrame(
-                columns=["star_id","mission","provenance","split","start","end","seg_mid_time","label","label_star"]
+                columns=["star_id", "mission", "provenance", "split", "start", "end", "seg_mid_time", "label", "label_star"]
             )
             df_meta.to_parquet(meta_path, index=False)
             self._write_latest_pointer("meta", split_name, meta_path)
@@ -310,7 +330,6 @@ class K2SegmentDatasetBuilder:
             if self.verbose:
                 print(f"[{split_name}] {star_id_out}: windows={n_windows} pos_star={label_star}")
 
-        # Safety truncate (shouldn't happen, but keep it)
         if write_idx != total:
             if self.verbose:
                 print(f"[{split_name}] Truncating X: wrote {write_idx} of planned {total}")
@@ -323,7 +342,6 @@ class K2SegmentDatasetBuilder:
 
         if self.verbose:
             pos_win = int(df_meta["label"].sum()) if len(df_meta) else 0
-            # Avoid np.load(mmap_mode='r') here to reduce Windows file locking pain
             print(f"[{split_name}] Saved: {X_path} shape=({write_idx}, {self.window_len}, 2)")
             print(f"[{split_name}] Saved: {meta_path} rows={len(df_meta)} pos_win={pos_win}")
 
@@ -331,8 +349,7 @@ class K2SegmentDatasetBuilder:
 
     # -----------------------------
     # Internal helpers
-    # -----------------------------from typing import List, Dict
-
+    # -----------------------------
 
     def _canon_epic(self, x: str) -> str:
         """Return EPIC ID as digits only, e.g. 'EPIC_211822797' -> '211822797'."""
@@ -360,57 +377,43 @@ class K2SegmentDatasetBuilder:
         import lightkurve as lk
         from astropy.utils.data import conf as astropy_conf
 
-        # Helps prevent random MAST network stalls from killing you
         astropy_conf.remote_timeout = getattr(self, "remote_timeout", 120)
 
-        # Normalize EPIC id
         sid_raw = str(star_id)
         sid = sid_raw.replace("EPIC_", "").replace("EPIC ", "").strip()
         query = f"EPIC {sid}"
         print("Querying:", query)
 
         banned = {b.upper() for b in getattr(self, "banned_provenance", [])}
-
-        # Prefer these pipelines/authors if present (and not banned)
         priority = [p for p in getattr(self, "provenance_priority", []) if p.upper() not in banned]
         allowed_authors = tuple(priority) if len(priority) > 0 else None
 
-        # 1) Try filtered search first (reduces 25K EPIC -> 140K products explosion)
         try:
             sr = lk.search_lightcurve(query, mission="K2", author=allowed_authors, limit=50)
         except TypeError:
-            # Older lightkurve versions may not support limit= or tuple author
             sr = lk.search_lightcurve(query, mission="K2", author=allowed_authors)
 
-        # 2) Fallback to unfiltered d if filtered yields nothing
         if len(sr) == 0:
             sr = lk.search_lightcurve(query, mission="K2")
             if len(sr) == 0:
                 raise RuntimeError(f"No K2 lightcurve found for {sid} (query='{query}')")
 
         tbl = sr.table
-
         prov = np.asarray(tbl["provenance_name"]).astype(str) if "provenance_name" in tbl.colnames else None
 
-        # Build candidate order (priority first, then other non-banned)
         idxs: List[int] = []
         if prov is not None:
             prov_u = np.char.upper(prov)
-
             for p in priority:
                 idxs.extend([i for i in range(len(sr)) if prov_u[i] == p.upper()])
-
             idxs.extend([i for i in range(len(sr)) if prov_u[i] not in banned and i not in idxs])
         else:
             idxs = list(range(len(sr)))
 
-        # Hard cap so a single EPIC can’t try 40+ products
         max_products = int(getattr(self, "max_products_per_star", 6))
         idxs = idxs[:max_products]
 
         last_err: Optional[Exception] = None
-
-        # Ensure we always download into a stable folder (so cache reuse is reliable)
         download_dir = getattr(self, "download_dir", None)
 
         for i in idxs:
@@ -426,16 +429,15 @@ class K2SegmentDatasetBuilder:
                 if obj is None:
                     continue
 
-                # If we ever get a collection, stitch it; otherwise keep single LC
                 lc = obj
                 if hasattr(obj, "stitch"):
                     try:
                         lc = obj.stitch()
                     except Exception:
                         lc = obj
-                time = np.asarray(lc.time.value, dtype=np.float64)  # days
-                flux = np.asarray(lc.flux.value, dtype=np.float32)  # keep NaNs
 
+                time = np.asarray(lc.time.value, dtype=np.float64)  # days
+                flux = np.asarray(lc.flux.value, dtype=np.float32)  # may include NaNs
                 prov_name = str(prov[i]) if prov is not None else "UNKNOWN"
 
                 if time.size == 0 or flux.size == 0:
@@ -451,36 +453,72 @@ class K2SegmentDatasetBuilder:
 
         raise RuntimeError(f"Failed to download supported LC for {sid}. Last error: {last_err}")
 
-    def _preprocess(self, time: np.ndarray, flux: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    # ---- NEW: two-stage preprocessing ----
+
+    def _flatten_and_relative(self, time: np.ndarray, flux: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Length-preserving preprocessing.
+        1) Optional flatten (length-preserving).
+        2) Ensure relative flux ~1.0 (so ppm-depth injection is meaningful).
+        Returns (time_out, flux_rel).
         """
         time = np.asarray(time, dtype=np.float64)
         flux = np.asarray(flux, dtype=np.float32)
 
-        # Optional flatten (keeps same length; Lightkurve may introduce NaNs in masked areas)
         if self.pre_cfg.use_flatten:
             try:
                 import lightkurve as lk
                 lc = lk.LightCurve(time=time, flux=flux)
-                lc2 = lc.flatten(window_length=self.pre_cfg.flatten_window_length, polyorder=self.pre_cfg.flatten_polyorder)
+                lc2 = lc.flatten(window_length=self.pre_cfg.flatten_window_length,
+                                 polyorder=self.pre_cfg.flatten_polyorder)
                 flux = np.asarray(lc2.flux.value, dtype=np.float32)
                 time = np.asarray(lc2.time.value, dtype=np.float64)
             except Exception:
-                # If flatten fails, continue with raw flux
+                # continue with raw
                 pass
 
-        # Robust normalize (nan-safe), keep length
-        if self.pre_cfg.robust_center:
+        if self.pre_cfg.force_relative_flux:
             med = np.nanmedian(flux)
-            std = np.nanstd(flux) + 1e-8
-            flux = (flux - med) / std
+            if np.isfinite(med) and med != 0.0:
+                flux = flux / med
+            else:
+                # if med is bad, just shift to ~1 using nanmean
+                mu = np.nanmean(flux)
+                if np.isfinite(mu) and mu != 0.0:
+                    flux = flux / mu
+
+        return time, flux.astype(np.float32, copy=False)
+
+    def _standardize_flux(self, flux_rel: np.ndarray) -> np.ndarray:
+        """
+        After injection, normalize to robust ML-friendly scale.
+        Default: (flux - median) / (1.4826*MAD)
+        """
+        x = np.asarray(flux_rel, dtype=np.float32)
+
+        if self.pre_cfg.robust_center:
+            med = np.nanmedian(x)
+            x0 = x - med
+
+            if self.pre_cfg.use_mad_scale:
+                mad = np.nanmedian(np.abs(x0))
+                scale = (1.4826 * mad) if np.isfinite(mad) else np.nan
+                if not np.isfinite(scale) or scale <= 0:
+                    scale = np.nanstd(x)  # fallback
+            else:
+                scale = np.nanstd(x)
+
+            scale = float(scale) + 1e-8
+            x = x0 / scale
+
+        if self.pre_cfg.clip_sigma is not None:
+            c = float(self.pre_cfg.clip_sigma)
+            x = np.clip(x, -c, c)
 
         if self.pre_cfg.fill_nonfinite_with_zero:
-            flux = flux.astype(np.float32, copy=False)
-            flux[~np.isfinite(flux)] = 0.0
+            x = x.astype(np.float32, copy=False)
+            x[~np.isfinite(x)] = 0.0
 
-        return flux.astype(np.float32, copy=False), time
+        return x.astype(np.float32, copy=False)
 
     def _count_windows(self, n_points: int) -> int:
         n = int(n_points)
@@ -488,39 +526,35 @@ class K2SegmentDatasetBuilder:
             return 0
         return 1 + (n - self.window_len) // self.stride
 
-    def _inject_box_transits(self, time: np.ndarray, flux: np.ndarray) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    def _inject_box_transits(self, time: np.ndarray, flux_rel: np.ndarray) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
         """
-        Injects a simple box-shaped transit pattern into flux.
+        Injects a simple box-shaped transit pattern into RELATIVE flux (~1.0).
 
         Returns:
-          flux_injected, info dict with in_transit boolean mask
+          flux_rel_injected, info dict with in_transit mask and ephemeris.
         """
         t = np.asarray(time, dtype=np.float64)
-        y = np.asarray(flux, dtype=np.float32).copy()
+        y = np.asarray(flux_rel, dtype=np.float32).copy()
 
-        # Random params
         P = self._rng.uniform(*self.inj_cfg.period_days_range)
         dur_hr = self._rng.uniform(*self.inj_cfg.duration_hours_range)
         depth_ppm = self._rng.uniform(*self.inj_cfg.depth_ppm_range)
 
         dur_days = dur_hr / 24.0
-        depth = depth_ppm * 1e-6  # ppm -> relative
+        depth = depth_ppm * 1e-6  # ppm -> relative depth
 
-        # Choose t0 inside span
         tmin, tmax = np.nanmin(t), np.nanmax(t)
         if not np.isfinite(tmin) or not np.isfinite(tmax) or tmax <= tmin:
             return y, {"in_transit": np.zeros_like(y, dtype=bool)}
 
         t0 = self._rng.uniform(tmin, min(tmax, tmin + P))
 
-        # Compute phase distance to nearest transit center
         phase = ((t - t0) % P)
         dist = np.minimum(phase, P - phase)
 
         in_transit = dist <= (dur_days / 2.0)
 
-        # Apply dip (subtract depth in normalized units; your flux is normalized so depth is relative-ish)
-        # We inject as a negative offset scaled by depth.
+        # Apply dip in relative-flux space
         y[in_transit] = y[in_transit] - float(depth)
 
         return y.astype(np.float32), {
@@ -531,12 +565,7 @@ class K2SegmentDatasetBuilder:
             "depth": float(depth),
         }
 
-    
     def _write_latest_pointer(self, kind: str, split_name: str, path: Path) -> None:
-        """
-        Writes a small pointer file so you can always find the newest artifact even
-        if the stable filename was locked and we had to fall back to a versioned name.
-        """
         ptr = (self.out_dir / f"{kind}_{split_name}_LATEST.txt").resolve()
         ptr.write_text(str(Path(path).resolve()), encoding="utf-8")
 
@@ -548,15 +577,6 @@ class K2SegmentDatasetBuilder:
         retries: int = 10,
         sleep_s: float = 0.25,
     ) -> Path:
-        """
-        Save arr to target_path safely on Windows.
-
-        - writes to <stem>.tmp.npy first (prevents np.save adding .npy unexpectedly)
-        - tries os.replace(tmp, target) a few times
-        - if still locked, moves tmp to a versioned filename and returns that path
-
-        Never hangs (bounded retries).
-        """
         target_path = Path(target_path).resolve()
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -566,7 +586,6 @@ class K2SegmentDatasetBuilder:
         if not tmp_path.exists():
             raise RuntimeError(f"Temp file was not created: {tmp_path}")
 
-        # Try to replace stable path (may fail if locked)
         for _ in range(int(retries)):
             try:
                 os.replace(str(tmp_path), str(target_path))
@@ -574,7 +593,6 @@ class K2SegmentDatasetBuilder:
             except PermissionError:
                 time.sleep(float(sleep_s))
 
-        # Fallback: write a versioned file (always succeeds unless directory perms are broken)
         stamp = time.strftime("%Y%m%d_%H%M%S")
         fallback_path = target_path.with_name(f"{target_path.stem}_{stamp}.npy").resolve()
         os.replace(str(tmp_path), str(fallback_path))
@@ -589,12 +607,9 @@ class K2SegmentDatasetBuilder:
         n = len(ids)
         if n <= 2:
             return ids, [], []
-
-        # for n=3: 2/1/0
         if n == 3:
             return ids[:2], ids[2:], []
 
-        # n>=4: 80/10/10 but guarantee val>=1 and test>=1
         n_train = max(1, int(round(0.8 * n)))
         n_val = max(1, int(round(0.1 * n)))
         if n_train + n_val >= n:
