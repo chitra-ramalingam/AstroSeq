@@ -39,3 +39,4 @@ src/Classifiers/Triages/__pycache__/K2_Score_loader.cpython-313.pyc
 src/Classifiers/Triages/__pycache__/AstroSeqTriageCandidate.cpython-313.pyc
 models/*
 src/Classifiers/K2/Analysis/__pycache__/K2_PrintAnalysis.cpython-313.pyc
+splits/*

@@ -12,6 +12,10 @@ from src.Classifiers.K2.K2_Dataset_builder import K2SegmentDatasetBuilder, Injec
 from src.Classifiers.K2.K2_trainer import K2TransitTrainerV2, TrainConfig
 from src.Classifiers.K2.K2CampaignSource import K2CampaignEpicSource
 from src.Classifiers.K2.Analysis.K2_PrintAnalysis import K2_PrintAnalysis
+from src.Classifiers.K2.K2_PrintModelOutputs import K2PrintModelOutputs
+from src.Classifiers.K2.K2_SplitSeedSweep import ValSplitSweep
+from src.Classifiers.K2.K2_SplitSeedDataFactory import K2SplitSeedDatasetFactory
+
 CSV_PATH = "k2_inference_scores.csv"
 CACHE_DIR = Path("k2_cache")
 
@@ -45,9 +49,41 @@ def main():
 
 
 def K2_ModelCreationAndTraining_Printing():
-    triageCandidates()
-    #printValues()
-     
+    #triageCandidates()
+    #printdata = K2PrintModelOutputs()
+    #printdata.loadall("k2_dataset_centered_v4")
+    k2_model_splitting_eval()
+    
+def k2_model_splitting_eval():
+    src = K2CampaignEpicSource(campaign=5)
+    fetched = src.fetch_epic_ids(prefix=True) 
+    epics = sorted(fetched)[:3000]
+    src.save_epics_list(epics=epics, out_path="splits/epics_used.txt")
+
+    Path("splits/epics_used.txt").write_text("\n".join(epics), encoding="utf-8")
+    factory = K2SplitSeedDatasetFactory(
+        base_out_root="splits",
+        window_len=512,
+        stride=256,
+        preprocess_cfg=PreprocessConfig(),
+        inject_cfg=InjectionConfig(enabled=True, rng_seed=42),
+        verbose=True,
+        injection_seed_offset=False,
+        )
+
+    paths_by_seed = factory.build_many(epics, split_seeds=[101, 202, 303])
+    print(paths_by_seed[101].X_val, paths_by_seed[101].meta_val)
+    trainer = K2TransitTrainerV2(TrainConfig(seed=46), verbose=True)
+    sweep = ValSplitSweep(
+        trainer=trainer,
+        model_path="models/k2_nocrop_flux_seed46.best.keras",
+        split_root="splits",
+        split_seeds=[101, 202, 303],
+    )
+
+    sweep.run(out_csv="split_seed_sweep/seed46_eval_only.csv")
+
+
 def k2Processors():
         #############Not used after lots issues needs abandoning
     # df = pd.read_csv("k2_inference_scores.csv")

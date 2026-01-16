@@ -111,9 +111,11 @@ class K2SegmentDatasetBuilder:
         Returns (X_path, meta_path).
 
         Workflow:
-        - Cache per-star arrays to disk.
-        - Second pass reads cached arrays (no network).
-        - Positive-star selection persisted for determinism.
+        - PASS 1: ensure per-star cache exists (download+preprocess+inject+standardize), compute total windows
+        - PASS 2: allocate X once, write windows from cached arrays (no network), write meta parquet
+
+        Positive-star selection:
+        - persisted per split under cache_dir so old files don’t poison new dataset versions
         """
         split_name = str(split_name)
         split_l = split_name.lower()
@@ -121,23 +123,26 @@ class K2SegmentDatasetBuilder:
         X_path = self.out_dir / f"X_{split_name}.npy"
         meta_path = self.out_dir / f"meta_{split_name}.parquet"
 
-        force_at_least_one = split_l.startswith(("train", "val"))
+        # You can decide if you want to force at least one positive in test as well
+        force_at_least_one = split_l.startswith(("train", "val", "test"))
 
-        # NOTE: keep using your cache folder; change if we want a new version
-        cache_folder = Path("k2_dataset_centered_v4")
-        cache_dir = cache_folder / "_cache" / split_name
+        # Cache lives under THIS out_dir (versioned by output folder)
+        cache_dir = self.out_dir / "_cache" / split_name
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # persist positive-star selection
-        posmap_path = self.out_dir / f"posstars_{split_name}.parquet"
+        # Persist positive-star selection next to the cache for this split
+        posmap_path = cache_dir / f"posstars_{split_name}.parquet"
 
         epic_ids = list(epic_ids)
         epic_ids_can = [self._canon_epic(s) for s in epic_ids]
 
+        # -----------------------------
+        # Decide which stars are positive for injection (star-level label)
+        # -----------------------------
         if self.inj_cfg.enabled:
             if posmap_path.exists():
                 dfp = pd.read_parquet(posmap_path)
-                is_pos_star = {str(r["sid_can"]): bool(r["is_pos"]) for _, r in dfp.iterrows()}
+                is_pos_star = {str(r["sid_can"]): bool(int(r["is_pos"])) for _, r in dfp.iterrows()}
             else:
                 is_pos_star = self._choose_positive_stars(epic_ids, force_at_least_one=force_at_least_one)
                 dfp = pd.DataFrame(
@@ -161,40 +166,72 @@ class K2SegmentDatasetBuilder:
         for sid_in in epic_ids:
             sid_can = self._canon_epic(sid_in)          # digits only
             star_id_out = f"EPIC_{sid_can}"
-
             cache_npz = cache_dir / f"{star_id_out}.npz"
 
-            if cache_npz.exists():
-                z = np.load(cache_npz, allow_pickle=True)
-                n_points = int(z["n_points"])
-                n_windows = self._count_windows(n_points)
-                prov = str(z["prov"])
-                label_star = int(z["label_star"])
-                has_inj = int(z["has_inj"])
-                total += n_windows
-                plan_rows.append(
-                    {
-                        "star_id": star_id_out,
-                        "cache": str(cache_npz),
-                        "n_windows": int(n_windows),
-                        "provenance": prov,
-                        "label_star": int(label_star),
-                        "has_inj": int(has_inj),
-                    }
-                )
-                continue
+            should_be_pos = int(is_pos_star.get(sid_can, False)) if self.inj_cfg.enabled else 0
 
-            # Download ONCE
+            # ----- Use cache if valid; rebuild if corrupt or label mismatch -----
+            if cache_npz.exists():
+                h = self._read_cache_header(cache_npz)
+
+                # Corrupt cache—quarantine and rebuild
+                if "error" in h:
+                    if self.verbose:
+                        print(f"[{split_name}] cache corrupt for {star_id_out}: {h['error']} — rebuilding")
+                    bad = cache_npz.with_suffix(".corrupt.npz")
+                    try:
+                        if bad.exists():
+                            bad.unlink()
+                        cache_npz.replace(bad)  # rename away
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"[{split_name}] WARNING: couldn't move corrupt cache: {e}")
+                    # fall through to rebuild
+
+                else:
+                    cached_label_star = int(h["label_star"])
+
+                    # Stale cache label—quarantine and rebuild
+                    if cached_label_star != should_be_pos:
+                        if self.verbose:
+                            print(f"[{split_name}] cache stale for {star_id_out}—rebuild {cached_label_star}->{should_be_pos}")
+                        stale = cache_npz.with_suffix(".stale.npz")
+                        try:
+                            if stale.exists():
+                                stale.unlink()
+                            cache_npz.replace(stale)
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"[{split_name}] WARNING: couldn't move stale cache: {e}")
+                        # fall through to rebuild
+
+                    else:
+                        # Cache is good—plan from header
+                        n_points = int(h["n_points"])
+                        n_windows = self._count_windows(n_points)
+                        total += n_windows
+                        plan_rows.append(
+                            {
+                                "star_id": star_id_out,
+                                "cache": str(cache_npz),
+                                "n_windows": int(n_windows),
+                                "provenance": str(h["prov"]),
+                                "label_star": int(h["label_star"]),
+                                "has_inj": int(h["has_inj"]),
+                            }
+                        )
+                        continue  # next star
+
+            # ----- Rebuild cache for this star (download + preprocess + inject + standardize) -----
             t_raw, f_raw, prov = self._fetch_time_flux(sid_can)
 
             # 1) Flatten + relative flux (length-preserving)
             time_p, flux_rel = self._flatten_and_relative(time=t_raw, flux=f_raw)
 
-            # 2) Choose star label
-            n_windows = self._count_windows(len(flux_rel))
-            label_star = int(is_pos_star.get(sid_can, False))
+            # 2) Star-level label for this build
+            label_star = int(should_be_pos)
 
-            # 3) Inject on RELATIVE flux (around 1.0), then normalize AFTER injection
+            # 3) Inject on RELATIVE flux, then normalize AFTER injection
             has_inj = 0
             t0 = np.nan
             period = np.nan
@@ -224,13 +261,14 @@ class K2SegmentDatasetBuilder:
                 dur_days=np.float64(dur_days),
             )
 
+            n_windows = self._count_windows(len(flux_p))
             total += n_windows
             plan_rows.append(
                 {
                     "star_id": star_id_out,
                     "cache": str(cache_npz),
                     "n_windows": int(n_windows),
-                    "provenance": prov,
+                    "provenance": str(prov),
                     "label_star": int(label_star),
                     "has_inj": int(has_inj),
                 }
@@ -239,6 +277,9 @@ class K2SegmentDatasetBuilder:
         if self.verbose:
             print(f"[{split_name}] Planned windows: {total} across {len(epic_ids)} stars")
 
+        # -----------------------------
+        # Handle empty split
+        # -----------------------------
         if total == 0:
             X_empty = np.zeros((0, self.window_len, 2), dtype=np.float32)
             X_written_path = self._safe_save_npy_overwrite_or_version(
@@ -273,13 +314,14 @@ class K2SegmentDatasetBuilder:
             label_star = int(row["label_star"])
             has_inj = int(row["has_inj"]) == 1
 
-            z = np.load(str(row["cache"]), allow_pickle=True)
-            flux_p = z["flux_p"].astype(np.float32, copy=False)
-            time_p = z["time_p"].astype(np.float64, copy=False)
+            cache_file = str(row["cache"])
+            with np.load(cache_file, allow_pickle=True) as z:
+                flux_p = z["flux_p"].astype(np.float32, copy=False)
+                time_p = z["time_p"].astype(np.float64, copy=False)
 
-            t0 = float(z["t0"])
-            period = float(z["period"])
-            dur_days = float(z["dur_days"])
+                t0 = float(z["t0"])
+                period = float(z["period"])
+                dur_days = float(z["dur_days"])
 
             for w in range(n_windows):
                 start = w * self.stride
@@ -342,14 +384,27 @@ class K2SegmentDatasetBuilder:
 
         if self.verbose:
             pos_win = int(df_meta["label"].sum()) if len(df_meta) else 0
+            pos_star_rows = int(df_meta["label_star"].sum()) if len(df_meta) else 0
             print(f"[{split_name}] Saved: {X_path} shape=({write_idx}, {self.window_len}, 2)")
-            print(f"[{split_name}] Saved: {meta_path} rows={len(df_meta)} pos_win={pos_win}")
+            print(f"[{split_name}] Saved: {meta_path} rows={len(df_meta)} pos_win={pos_win} pos_star_rows={pos_star_rows}")
 
         return X_path, meta_path
 
     # -----------------------------
     # Internal helpers
     # -----------------------------
+    def _read_cache_header(self,npz_path: Path):
+        """Read only the small header fields—never leak the open handle."""
+        try:
+            with np.load(npz_path, allow_pickle=True) as z:
+                return {
+                    "n_points": int(z["n_points"]),
+                    "prov": str(z["prov"]),
+                    "label_star": int(z["label_star"]),
+                    "has_inj": int(z["has_inj"]),
+                }
+        except Exception as e:
+            return {"error": str(e)}
 
     def _canon_epic(self, x: str) -> str:
         """Return EPIC ID as digits only, e.g. 'EPIC_211822797' -> '211822797'."""

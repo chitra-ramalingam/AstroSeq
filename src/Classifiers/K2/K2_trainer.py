@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
+from typing import Dict, Any
 import math
 import numpy as np
 import pandas as pd
@@ -363,3 +364,48 @@ class K2TransitTrainerV2:
             s = int(starts[i])
             out[i] = X[i, s:s + crop, :]
         return out
+
+    def evaluate_pretrained(
+            self,
+            model_path: str | Path,
+            X_path: str | Path,
+            meta_path: str | Path,
+            split_name: str = "val",
+        ) -> Dict[str, Any]:
+            """
+            Eval a frozen model on a provided split (X/meta pair).
+            Returns metrics you can log in the sweep.
+            """
+            model_path = Path(model_path)
+            if not model_path.exists():
+                raise FileNotFoundError(f"Missing model: {model_path}")
+
+            X, y = self.load_split(X_path, meta_path)
+            ds = self.make_tfdata(X, y, training=False)
+
+            model = tf.keras.models.load_model(model_path)
+
+            # PR-AUC (matches your training metric style)
+            pr_auc = self._eval_pr_auc(model, ds)
+
+            # Predictions for top-K and any extra diagnostics
+            p = model.predict(ds, verbose=0).ravel().astype(np.float32)
+            y1 = y.reshape(-1).astype(np.float32)
+
+            k = 50
+            top = np.argsort(-p)[:k]
+            top50_prec = float(y1[top].mean()) if len(y1) else float("nan")
+
+            out = {
+                f"{split_name}_pr_auc": pr_auc,
+                f"{split_name}_top50": top50_prec,
+                "n": int(len(y1)),
+                "pos": int(y1.sum()),
+                "pos_frac": float(np.mean(y1)) if len(y1) else float("nan"),
+            }
+
+            if self.verbose:
+                print(f"[{split_name}] PR-AUC={out[f'{split_name}_pr_auc']:.6f}  top50={out[f'{split_name}_top50']:.6f} "
+                    f" pos={out['pos']}/{out['n']}")
+
+            return out

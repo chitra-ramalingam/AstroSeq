@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 import re
+from pathlib import Path
+import hashlib
 
 import pandas as pd
 import requests
@@ -41,6 +43,20 @@ class K2CampaignEpicSource:
                 return col
         # fallback: first column
         return str(df.columns[0])
+    
+    def save_epics_list(self, epics, out_path="splits/epics_used.txt"):
+        p = Path(out_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save exact order
+        p.write_text("\n".join(epics) + "\n", encoding="utf-8")
+
+        # Save a fingerprint for quick “same or not?”
+        digest = hashlib.sha256(p.read_bytes()).hexdigest()
+        (p.parent / "epics_used.sha256").write_text(digest + "\n", encoding="utf-8")
+
+        print(f"Saved {len(epics)} EPICs to {p} — sha256={digest[:12]}…")
+
 
     def fetch_epic_ids(self, *, prefix: bool = True, use_cache: bool = True) -> List[str]:
         url = self._targets_url()
