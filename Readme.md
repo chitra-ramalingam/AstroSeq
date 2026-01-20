@@ -367,6 +367,11 @@ rebuilt K2 dataset + triage after enforcing product/index consistency.
 
 K2 phase fold
 
+Across split seeds (trained per split, same training seed=46)
+Split	Val pos frac (baseline PR)	Val PR-AUC	Lift over baseline	Val Top50 precision
+101	0.125	0.149	+0.024	0.28
+202	0.103	0.176	+0.073	0.40
+303	0.125	0.224	+0.099	0.42
 ## Keywords (for discoverability)
 
 exoplanet, transit, TESS, Kepler, K2, TOI, Lightkurve, MAST, 1D CNN, Inception ResNet, time series, astroinformatics, deep learning, astronomy, exoplanet detection, Python, TensorFlow

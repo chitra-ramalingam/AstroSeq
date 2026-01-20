@@ -15,6 +15,8 @@ from src.Classifiers.K2.Analysis.K2_PrintAnalysis import K2_PrintAnalysis
 from src.Classifiers.K2.K2_PrintModelOutputs import K2PrintModelOutputs
 from src.Classifiers.K2.K2_SplitSeedSweep import ValSplitSweep
 from src.Classifiers.K2.K2_SplitSeedDataFactory import K2SplitSeedDatasetFactory
+from src.Classifiers.K2.K2_EnsembleEvaluation import K2EnsembleEvaluator
+from src.Classifiers.K2.K2_InferenceBuilder import K2_inferenceBuilder
 
 CSV_PATH = "k2_inference_scores.csv"
 CACHE_DIR = Path("k2_cache")
@@ -52,7 +54,10 @@ def K2_ModelCreationAndTraining_Printing():
     #triageCandidates()
     #printdata = K2PrintModelOutputs()
     #printdata.loadall("k2_dataset_centered_v4")
-    k2_model_splitting_eval()
+    #k2_model_splitting_eval()
+    #K2_trainsplits()
+    #K2_printEnsembleEvals()
+    k2_RunFinalAll()
     
 def k2_model_splitting_eval():
     src = K2CampaignEpicSource(campaign=5)
@@ -83,6 +88,17 @@ def k2_model_splitting_eval():
 
     sweep.run(out_csv="split_seed_sweep/seed46_eval_only.csv")
 
+def K2_trainsplits():
+    trainer = K2TransitTrainerV2(TrainConfig(seed=46), verbose=True)
+    sweep = ValSplitSweep(
+        trainer=trainer,
+        model_path="models/k2_nocrop_flux_seed46.best.keras",
+        split_root="splits",
+        split_seeds=[101, 202, 303],
+    )
+    
+    for s in [101, 202, 303]:
+      sweep.train_on_split(s)
 
 def k2Processors():
         #############Not used after lots issues needs abandoning
@@ -184,6 +200,56 @@ def triageCandidates():
             f"{dataDir}/X_test.npy",  f"{dataDir}/meta_test.parquet",
             out_model_path=f"models/k2_nocrop_flux_seed{seed}.keras",
         )
+
+def K2_printEnsembleEvals():
+    models = [
+        "models/k2_nocrop_flux_seed46_split101.best.keras",
+        "models/k2_nocrop_flux_seed46_split202.best.keras",
+        "models/k2_nocrop_flux_seed46_split303.best.keras",
+    ]
+
+    trainer = K2TransitTrainerV2(TrainConfig(seed=46), verbose=False)
+
+    ens = K2EnsembleEvaluator(trainer=trainer, model_paths=models)
+    print("Ensemble Eval..")
+    metrics = ens.evaluate(
+        X_path="splits/seed303/X_val.npy",
+        meta_path="splits/seed303/meta_val.parquet",
+        k=50,
+    )
+
+    print(metrics)
+    res = ens.predict_ensemble(
+        X_path="splits/seed303/X_val.npy",
+        meta_path="splits/seed303/meta_val.parquet",
+    )
+
+    df = res.meta
+
+    # Keep best window per star
+    best_per_star = (
+        df.sort_values("p_ens", ascending=False)
+        .groupby("star_id", as_index=False)
+        .head(1)
+        .sort_values("p_ens", ascending=False)
+    )
+
+    best_per_star.head(50).to_csv("candidates_top50.csv", index=False)
+    print("Wrote candidates_top50.csv")
+    print(best_per_star[["star_id","p_ens","start","end","seg_mid_time"]].head(20))
+    cols = ["star_id","p_ens","label_star","label","start","end","seg_mid_time"]
+    print(best_per_star[cols].head(50))
+
+    print("Top50 star-level precision (label_star):",
+        float(best_per_star.head(50)["label_star"].mean()))
+
+    print("Top50 window-level precision (label):",
+        float(best_per_star.head(50)["label"].mean()))
+    
+def k2_RunFinalAll():
+    inf  = K2_inferenceBuilder()
+    inf.runEvals()
+
 
 def printValues():
     printK2 = K2_PrintSets()

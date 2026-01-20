@@ -2,8 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Dict, Any, List
 import csv
-from src.Classifiers.K2.K2_trainer import K2TransitTrainerV2
-
+from src.Classifiers.K2.K2_trainer import K2TransitTrainerV2, TrainConfig
 @dataclass(frozen=True)
 class SplitPaths:
     X_val: Path
@@ -71,3 +70,17 @@ class ValSplitSweep:
                 rows.append(row)
 
         return rows
+    
+    def train_on_split(self, split_seed: int):
+        base = Path(f"splits/seed{split_seed}")
+        tnr = K2TransitTrainerV2(TrainConfig(seed=46), verbose=True)
+
+        out = Path("models") / f"k2_nocrop_flux_seed46_split{split_seed}.keras"
+
+        tnr.train(
+            X_train_path=base/"X_train.npy", meta_train_path=base/"meta_train.parquet",
+            X_val_path=base/"X_val.npy",     meta_val_path=base/"meta_val.parquet",
+            X_test_path=base/"X_test.npy",   meta_test_path=base/"meta_test.parquet",
+            out_model_path=out,
+        )
+
