@@ -4,19 +4,23 @@ from src.Classifiers.K2.K2CampaignSource import K2CampaignEpicSource
 from src.Classifiers.K2.K2_EnsembleEvaluation import K2EnsembleEvaluator
 from src.Classifiers.K2.K2_Dataset_builder import K2SegmentDatasetBuilder, InjectionConfig, PreprocessConfig
 from src.Classifiers.K2.K2_trainer import K2TransitTrainerV2, TrainConfig
+import numpy as np
 
 
 class K2_inferenceBuilder:
     def __init__(self):
         pass
 
-    def _build_c5_infer_dataset(self, limit: int | None = None):
+    def _build_c5_infer_dataset(self, limit: int | None = None, out_dir_name: str = "infer_c5_v2"):
         src = K2CampaignEpicSource(campaign=5)
         epics = src.fetch_epic_ids(prefix=True)   # keep as-is (same population behavior)
         if limit is not None:
             epics = epics[:limit]
+        target = "EPIC_211797674"
+        if target not in epics:
+           epics.append(target)
 
-        out_dir = Path("splits/infer_c5")
+        out_dir = Path(f"splits/{out_dir_name}")
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "epics_used.txt").write_text("\n".join(epics) + "\n", encoding="utf-8")
         print("epics:", len(epics), "saved to", out_dir / "epics_used.txt")
@@ -25,7 +29,7 @@ class K2_inferenceBuilder:
             out_dir=out_dir,
             window_len=512,
             stride=256,
-            preprocess_cfg=PreprocessConfig(),
+            preprocess_cfg=PreprocessConfig(clip_sigma=15),
             inject_cfg=InjectionConfig(enabled=False, rng_seed=42),  # <- OFF
             verbose=True,
         )
@@ -38,8 +42,8 @@ class K2_inferenceBuilder:
     # X_path, meta_path = build_c5_infer_dataset(limit=5000)
     # X_path, meta_path = build_c5_infer_dataset(limit=10000)
 
-    def runEvals(self):
-        X_path, meta_path = self._build_c5_infer_dataset(limit=None)  # full run (~25k)
+    def runEvals(self, limit: int | None = None, out_dir_name: str = "infer_c5_v2"):
+        X_path, meta_path = self._build_c5_infer_dataset(limit=limit, out_dir_name=out_dir_name)  # full run (~25k)
 
         models = [
             "models/k2_nocrop_flux_seed46_split101.best.keras",
@@ -76,3 +80,10 @@ class K2_inferenceBuilder:
         top3_per_star.to_csv("candidates_c5_top3_windows_per_star.csv", index=False)
 
         print(best_per_star.head(20)[["rank","star_id","p_ens","start","end","seg_mid_time"]])
+
+        z = np.load("splits/infer_c5_v2_smoke_one/_cache/infer/EPIC_211797674.npz", allow_pickle=True)
+        flux = z["flux_p"]
+
+        print("min/max:", float(flux.min()), float(flux.max()))
+        print("count_exact_-10:", int((flux == -10.0).sum()))
+        print("count_near_-10:", int((abs(flux + 10.0) < 1e-6).sum()))

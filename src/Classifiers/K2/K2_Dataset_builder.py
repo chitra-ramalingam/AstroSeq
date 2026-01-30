@@ -543,38 +543,7 @@ class K2SegmentDatasetBuilder:
 
         return time, flux.astype(np.float32, copy=False)
 
-    def _standardize_flux(self, flux_rel: np.ndarray) -> np.ndarray:
-        """
-        After injection, normalize to robust ML-friendly scale.
-        Default: (flux - median) / (1.4826*MAD)
-        """
-        x = np.asarray(flux_rel, dtype=np.float32)
-
-        if self.pre_cfg.robust_center:
-            med = np.nanmedian(x)
-            x0 = x - med
-
-            if self.pre_cfg.use_mad_scale:
-                mad = np.nanmedian(np.abs(x0))
-                scale = (1.4826 * mad) if np.isfinite(mad) else np.nan
-                if not np.isfinite(scale) or scale <= 0:
-                    scale = np.nanstd(x)  # fallback
-            else:
-                scale = np.nanstd(x)
-
-            scale = float(scale) + 1e-8
-            x = x0 / scale
-
-        if self.pre_cfg.clip_sigma is not None:
-            c = float(self.pre_cfg.clip_sigma)
-            x = np.clip(x, -c, c)
-
-        if self.pre_cfg.fill_nonfinite_with_zero:
-            x = x.astype(np.float32, copy=False)
-            x[~np.isfinite(x)] = 0.0
-
-        return x.astype(np.float32, copy=False)
-
+    
     def _count_windows(self, n_points: int) -> int:
         n = int(n_points)
         if n < self.window_len:
@@ -675,3 +644,43 @@ class K2SegmentDatasetBuilder:
         val = ids[n_train:n_train + n_val]
         test = ids[n_train + n_val:]
         return train, val, test
+    
+    def _standardize_flux(self, flux_rel: np.ndarray) -> np.ndarray:
+        x = np.asarray(flux_rel, dtype=np.float32)
+
+        med = np.nanmedian(x)
+        x0 = x - med
+
+        mad = np.nanmedian(np.abs(x0))
+        mad_scale = 1.4826 * mad if np.isfinite(mad) else np.nan
+        std_scale = np.nanstd(x0) if np.isfinite(np.nanstd(x0)) else np.nan
+
+        # Percentile scale—robust when MAD is tiny
+        p05 = np.nanpercentile(x0, 5)
+        p95 = np.nanpercentile(x0, 95)
+        pct_scale = 0.5 * (p95 - p05) if np.isfinite(p95) and np.isfinite(p05) else np.nan
+
+        # Stronger floor—prevents 1e-3 style blowups
+        MIN_SCALE = 5e-2  # 0.05—tune 0.02..0.1 if needed
+
+        scale = mad_scale
+        if (not np.isfinite(scale)) or (scale < MIN_SCALE):
+            scale = pct_scale
+        if (not np.isfinite(scale)) or (scale < MIN_SCALE):
+            scale = std_scale
+
+        if (not np.isfinite(scale)) or (scale < MIN_SCALE):
+            x = np.zeros_like(x0, dtype=np.float32)
+        else:
+            x = x0 / (float(scale) + 1e-8)
+
+        # Clip—this prevents the “insane” bucket from ever happening again
+        # Use a looser clip for inference to avoid flattening real events
+        if self.pre_cfg.clip_sigma is not None:
+            c = float(self.pre_cfg.clip_sigma)
+            x = np.clip(x, -c, c)
+
+        if self.pre_cfg.fill_nonfinite_with_zero:
+            x[~np.isfinite(x)] = 0.0
+
+        return x.astype(np.float32, copy=False)
