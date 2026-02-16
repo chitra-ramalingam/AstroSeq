@@ -11,6 +11,7 @@ from src.Classifiers.K2.Systematics.K2NoiseLoader import (
     K2NoiseLoader,
     K2NoiseLoaderConfig,
 )
+from src.Classifiers.K2.Systematics.K2_SNR import K2SNR
 
 
 @dataclass
@@ -79,8 +80,16 @@ class K2TransitCandidate:
 
 
 class K2TimeDomainPreprocessor:
-    def __init__(self, config: Optional[K2TimeDomainPreprocessConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[K2TimeDomainPreprocessConfig] = None,
+        snr: Optional[K2SNR] = None,
+    ) -> None:
         self.config = config if config is not None else K2TimeDomainPreprocessConfig()
+        self.snr = snr if snr is not None else K2SNR(
+            window_days=float(self.config.local_window_days),
+            min_points=int(self.config.local_min_window_cadences),
+        )
 
     def preprocess(
         self,
@@ -113,17 +122,21 @@ class K2TimeDomainPreprocessor:
                 "thruster_mask": np.asarray([], dtype=bool),
             }
 
-        # Apply local robust normalization before artifact handling.
-        rel, baseline, sigma_local = self._local_robust_normalize(t, f)
+        # Apply canonical SNR normalization before artifact handling.
+        norm = self.snr.normalize(t, f)
+        rel = np.asarray(norm["flux_rel"], dtype=float)
 
         # Remove step-like cadence artifacts (thruster-style).
         keep = self._thruster_mask(rel)
         t = t[keep]
         f = f[keep]
 
-        # Recompute local sigma after masking for cleaner detection thresholds.
-        rel, baseline2, sigma_local = self._local_robust_normalize(t, f)
-        f_clean = self._asymmetric_outlier_handle(rel, sigma_local)
+        # Recompute canonical residual/sigma after masking for cleaner thresholds.
+        norm2 = self.snr.normalize(t, f)
+        resid = np.asarray(norm2["resid"], dtype=float)
+        baseline2 = np.asarray(norm2["baseline"], dtype=float)
+        sigma_local = np.asarray(norm2["local_sigma"], dtype=float)
+        f_clean = self._asymmetric_outlier_handle(resid, sigma_local)
 
         return {
             "time": t,
@@ -132,28 +145,6 @@ class K2TimeDomainPreprocessor:
             "local_baseline": baseline2,
             "thruster_mask": keep,
         }
-
-    def _local_robust_normalize(
-        self,
-        time: np.ndarray,
-        flux: np.ndarray,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        window = self._window_len_from_days(time)
-        baseline = self._rolling_median(flux, window)
-        baseline = np.where(np.isfinite(baseline), baseline, np.nanmedian(flux))
-        baseline = np.where(np.abs(baseline) > 1e-12, baseline, np.nanmedian(flux))
-
-        rel = (flux / (baseline + 1e-12)) - 1.0
-        rel_med = self._rolling_median(rel, window)
-        resid = rel - rel_med
-
-        mad = self._rolling_mad(resid, window)
-        sigma_local = 1.4826 * mad
-        global_sigma = float(np.nanmedian(np.abs(resid - np.nanmedian(resid))) * 1.4826 + 1e-12)
-        sigma_local = np.where(np.isfinite(sigma_local) & (sigma_local > 0), sigma_local, global_sigma)
-
-        rel = np.where(np.isfinite(rel), rel, 0.0)
-        return rel.astype(float), baseline.astype(float), sigma_local.astype(float)
 
     def _thruster_mask(self, rel_flux: np.ndarray) -> np.ndarray:
         cfg = self.config
@@ -204,69 +195,16 @@ class K2TimeDomainPreprocessor:
 
         return x
 
-    def _window_len_from_days(self, time: np.ndarray) -> int:
-        cfg = self.config
-        t = np.asarray(time, dtype=float)
-        if len(t) < 3:
-            base = int(max(5, cfg.local_min_window_cadences))
-            return base if base % 2 == 1 else base + 1
-
-        dt = np.diff(np.sort(t))
-        dt = dt[np.isfinite(dt) & (dt > 0)]
-        if len(dt) == 0:
-            raw = int(cfg.local_min_window_cadences)
-        else:
-            med_dt = float(np.nanmedian(dt))
-            raw = int(np.round(float(cfg.local_window_days) / med_dt))
-
-        w = max(int(cfg.local_min_window_cadences), raw)
-        if w % 2 == 0:
-            w += 1
-        return max(5, w)
-
-    @staticmethod
-    def _rolling_median(values: np.ndarray, window_len: int) -> np.ndarray:
-        x = np.asarray(values, dtype=float)
-        n = len(x)
-        out = np.zeros(n, dtype=float)
-        half = int(window_len // 2)
-        global_med = float(np.nanmedian(x)) if n > 0 else 0.0
-
-        for i in range(n):
-            a = max(0, i - half)
-            b = min(n, i + half + 1)
-            seg = x[a:b]
-            seg = seg[np.isfinite(seg)]
-            out[i] = float(np.nanmedian(seg)) if len(seg) > 0 else global_med
-
-        return out
-
-    @staticmethod
-    def _rolling_mad(values: np.ndarray, window_len: int) -> np.ndarray:
-        x = np.asarray(values, dtype=float)
-        n = len(x)
-        out = np.zeros(n, dtype=float)
-        half = int(window_len // 2)
-        global_med = float(np.nanmedian(x)) if n > 0 else 0.0
-        global_mad = float(np.nanmedian(np.abs(x - global_med)) + 1e-12) if n > 0 else 1e-12
-
-        for i in range(n):
-            a = max(0, i - half)
-            b = min(n, i + half + 1)
-            seg = x[a:b]
-            seg = seg[np.isfinite(seg)]
-            if len(seg) == 0:
-                out[i] = global_mad
-                continue
-            med = float(np.nanmedian(seg))
-            out[i] = float(np.nanmedian(np.abs(seg - med)) + 1e-12)
-
-        return out
 
 
 class K2TimeDomainTransitRanker:
-    def __init__(self, config: Optional[K2TimeDomainRankConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[K2TimeDomainRankConfig] = None,
+        snr: Optional[K2SNR] = None,
+    ) -> None:
         self.config = config if config is not None else K2TimeDomainRankConfig()
+        self.snr = snr if snr is not None else K2SNR()
 
     def rank_windows(
         self,
@@ -305,11 +243,21 @@ class K2TimeDomainTransitRanker:
                 continue
 
             seg = x[a:b]
-            seg_sigma = float(np.nanmedian(s[a:b])) if (b > a) else fallback_sigma
+            if len(seg) == 0 or not np.any(np.isfinite(seg)):
+                continue
             min_local = int(np.nanargmin(seg))
             min_idx = int(a + min_local)
-            depth = float(-np.nanmin(seg))
-            depth_snr = float(depth / (seg_sigma + 1e-12))
+
+            # Canonical depth/SNR calculation from shared K2SNR utility.
+            depth_stats = self.snr.depth_snr_for_segment(
+                time=t,
+                flux=x + 1.0,
+                i0=a,
+                i1=b,
+            )
+            depth = float(depth_stats["dip_depth"])
+            depth_snr = float(depth_stats["dip_snr"])
+            seg_sigma = float(depth_stats["local_sigma_med"])
 
             symmetry = self._symmetry_score(min_idx=min_idx, start=a, end=b)
             curvature = self._curvature_score(x=x, min_idx=min_idx, sigma=seg_sigma)
@@ -431,6 +379,12 @@ class K2TimeDomainTransitPipeline:
         rank_config: Optional[K2TimeDomainRankConfig] = None,
         handler_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
+        pre_cfg = preprocess_config if preprocess_config is not None else K2TimeDomainPreprocessConfig()
+        shared_snr = K2SNR(
+            window_days=float(pre_cfg.local_window_days),
+            min_points=int(pre_cfg.local_min_window_cadences),
+        )
+
         if loader is not None:
             self.loader = loader
         else:
@@ -442,14 +396,16 @@ class K2TimeDomainTransitPipeline:
                 handler_kwargs=kwargs,
             )
 
-        self.preprocessor = K2TimeDomainPreprocessor(preprocess_config)
-        self.ranker = K2TimeDomainTransitRanker(rank_config)
+        self.snr = shared_snr
+        self.preprocessor = K2TimeDomainPreprocessor(config=pre_cfg, snr=shared_snr)
+        self.ranker = K2TimeDomainTransitRanker(config=rank_config, snr=shared_snr)
 
     def run_one(
         self,
         query: str,
         limit: Optional[int] = None,
         exptime: Optional[Union[str, float]] = None,
+        cache_only: Optional[bool] = None,
     ) -> Dict[str, Any]:
         q = str(query).strip()
         if q == "":
@@ -462,6 +418,7 @@ class K2TimeDomainTransitPipeline:
             exptime=exptime,
             flatten=False,
             per_segment=True,
+            cache_only=cache_only,
         )
         if noise_row.get("status") != "ok":
             out = dict(noise_row)
@@ -470,7 +427,19 @@ class K2TimeDomainTransitPipeline:
             out["shape_rank_method"] = "time_domain"
             return {"summary": out, "candidates": []}
 
-        fetched = self.loader.handler.fetch_best(query=q, limit=limit or self.loader.loader_config.limit, exptime=exptime)
+        fetched = self.loader.handler.fetch_best(
+            query=q,
+            limit=limit or self.loader.loader_config.limit,
+            exptime=exptime,
+            cache_only=bool(self.loader.loader_config.cache_only if cache_only is None else cache_only),
+        )
+        if str(fetched.get("status", "ok")).lower() != "ok":
+            out = dict(noise_row)
+            out["status"] = str(fetched.get("status", "error"))
+            out["n_candidates"] = 0
+            out["best_shape_score"] = np.nan
+            out["shape_rank_method"] = "time_domain"
+            return {"summary": out, "candidates": []}
 
         # Strict quality filtering is forced here, and we disable symmetric sigma clipping.
         cleaned = self.loader.handler.clean(
@@ -518,12 +487,13 @@ class K2TimeDomainTransitPipeline:
         queries: Iterable[str],
         limit: Optional[int] = None,
         exptime: Optional[Union[str, float]] = None,
+        cache_only: Optional[bool] = None,
     ) -> Dict[str, pd.DataFrame]:
         summary_rows: List[Dict[str, Any]] = []
         candidate_rows: List[Dict[str, Any]] = []
 
         for q in queries:
-            result = self.run_one(query=str(q), limit=limit, exptime=exptime)
+            result = self.run_one(query=str(q), limit=limit, exptime=exptime, cache_only=cache_only)
             summary_rows.append(result["summary"])
             candidate_rows.extend(result["candidates"])
 

@@ -469,7 +469,6 @@ class K2SegmentDatasetBuilder:
         idxs = idxs[:max_products]
 
         last_err: Optional[Exception] = None
-        download_dir = getattr(self, "download_dir", None)
 
         for i in idxs:
             try:
@@ -478,7 +477,6 @@ class K2SegmentDatasetBuilder:
 
                 obj = sr[i].download(
                     quality_bitmask=self.quality_bitmask,
-                    download_dir=download_dir,
                     cache=True,
                 )
                 if obj is None:

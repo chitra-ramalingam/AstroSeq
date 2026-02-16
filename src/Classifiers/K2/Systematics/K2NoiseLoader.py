@@ -21,6 +21,7 @@ class K2NoiseLoaderConfig:
     flatten: bool = False
     per_segment: bool = False
     mode: str = "strict"
+    cache_only: bool = False
 
     def __post_init__(self) -> None:
         self.mode = str(self.mode).lower().strip()
@@ -62,6 +63,7 @@ class K2NoiseLoader:
         exptime: Optional[Union[str, float]] = None,
         flatten: Optional[bool] = None,
         per_segment: Optional[bool] = None,
+        cache_only: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
 
@@ -69,6 +71,7 @@ class K2NoiseLoader:
         use_exptime = self.loader_config.exptime if exptime is None else exptime
         use_flatten = bool(self.loader_config.flatten if flatten is None else flatten)
         use_per_segment = bool(self.loader_config.per_segment if per_segment is None else per_segment)
+        use_cache_only = bool(self.loader_config.cache_only if cache_only is None else cache_only)
 
         for q in queries:
             query = str(q).strip()
@@ -81,6 +84,7 @@ class K2NoiseLoader:
                     exptime=use_exptime,
                     flatten=use_flatten,
                     per_segment=use_per_segment,
+                    cache_only=use_cache_only,
                 )
             )
 
@@ -93,11 +97,13 @@ class K2NoiseLoader:
         exptime: Optional[Union[str, float]] = None,
         flatten: Optional[bool] = None,
         per_segment: Optional[bool] = None,
+        cache_only: Optional[bool] = None,
     ) -> Dict[str, Any]:
         use_limit = int(self.loader_config.limit if limit is None else limit)
         use_exptime = self.loader_config.exptime if exptime is None else exptime
         use_flatten = bool(self.loader_config.flatten if flatten is None else flatten)
         use_per_segment = bool(self.loader_config.per_segment if per_segment is None else per_segment)
+        use_cache_only = bool(self.loader_config.cache_only if cache_only is None else cache_only)
 
         base: Dict[str, Any] = {
             "query": query,
@@ -116,7 +122,33 @@ class K2NoiseLoader:
         }
 
         try:
-            fetched = self.handler.fetch_best(query=query, limit=use_limit, exptime=use_exptime)
+            fetched = self.handler.fetch_best(
+                query=query,
+                limit=use_limit,
+                exptime=use_exptime,
+                cache_only=use_cache_only,
+            )
+            if str(fetched.get("status", "ok")).lower() != "ok":
+                row = dict(base)
+                row.update(
+                    {
+                        "status": str(fetched.get("status", "error")),
+                        "author": fetched.get("author", ""),
+                        "search_result": fetched.get("search_result", {}),
+                        "why_not_usable": str(fetched.get("status", "error")),
+                        "notes": f"fetch_status={fetched.get('status', 'error')}",
+                        "n_points": 0,
+                        "baseline_days": 0.0,
+                        "duty_cycle": 0.0,
+                        "mad": np.nan,
+                        "robust_sigma": np.nan,
+                        "outlier_rate_6sigma": np.nan,
+                        "outlier_rate_global": np.nan,
+                        "step_score": np.nan,
+                        "whiteness_score": np.nan,
+                    }
+                )
+                return row
             cleaned = self.handler.clean(fetched["lc"], flatten=use_flatten)
             metric_obj = self.handler.metrics(
                 cleaned["time"],
@@ -200,6 +232,7 @@ class K2NoiseLoader:
         exptime: Optional[Union[str, float]] = None,
         flatten: Optional[bool] = None,
         per_segment: Optional[bool] = None,
+        cache_only: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         df = pd.read_csv(csv_path)
         if query_col not in df.columns:
@@ -211,6 +244,7 @@ class K2NoiseLoader:
             exptime=exptime,
             flatten=flatten,
             per_segment=per_segment,
+            cache_only=cache_only,
         )
 
     @staticmethod

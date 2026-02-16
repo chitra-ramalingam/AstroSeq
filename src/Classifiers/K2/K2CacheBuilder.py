@@ -1,11 +1,8 @@
 # k2_cached_scorer.py
 
 from __future__ import annotations
-import os
-import glob
 from astropy.io.fits.verify import VerifyError
 import re
-import os
 import time
 import math
 import json
@@ -70,8 +67,8 @@ class K2CachedScorer:
         verbose: bool = True,
     ):
         self.model_path = str(model_path)
+        # Kept for backward compatibility; Lightkurve manages cache location.
         self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.commonHelper = CommonHelper()
         self.author = author
         self.any_author = any_author
@@ -90,7 +87,7 @@ class K2CachedScorer:
         self.model = tf.keras.models.load_model(self.model_path)
 
         print(f"[K2CachedScorer] Loaded model: {self.model_path}")
-        print(f"[K2CachedScorer] Cache dir: {self.cache_dir.resolve()}")
+        print("[K2CachedScorer] Lightkurve cache: default user cache")
         print(f"[K2CachedScorer] seg_len={self.seg_len}, stride={self.stride}, use_all={self.use_all}")
 
     # ---------- Public API ----------
@@ -102,7 +99,7 @@ class K2CachedScorer:
         sleep_s: float = 0.0,
     ) -> pd.DataFrame:
         """
-        Downloads light curves into download_dir cache. This is I/O-bound; use a few threads.
+        Downloads light curves into Lightkurve's default cache. This is I/O-bound; use a few threads.
         Returns a dataframe with per-target download status.
         """
         epic_ids = [str(e).strip() for e in epic_ids]
@@ -116,9 +113,9 @@ class K2CachedScorer:
                     return {"epic_id": epic, "status": "no_search_results", "files": 0, "seconds": time.time() - t0}
 
                 if self.use_all:
-                    _ = sr[: self.max_files].download_all(download_dir=str(self.cache_dir))
+                    _ = sr[: self.max_files].download_all()
                 else:
-                    _ = sr[0].download(download_dir=str(self.cache_dir))
+                    _ = sr[0].download()
 
                 if sleep_s > 0:
                     time.sleep(sleep_s)
@@ -312,10 +309,10 @@ class K2CachedScorer:
 
         if self.use_all:
             # (optional: add retry logic for download_all too, but start simple)
-            lcc = sr[: self.max_files].download_all(download_dir=str(self.cache_dir))
+            lcc = sr[: self.max_files].download_all()
             lc = lcc.stitch().remove_nans().normalize()
         else:
-            lc = self._download_lc_with_retry(sr, epic_num)
+            lc = self._download_lc_with_retry(sr)
         try:
             lc_flat = lc.flatten(window_length=self.flatten_window_length, polyorder=self.flatten_polyorder)
         except Exception:
@@ -376,27 +373,12 @@ class K2CachedScorer:
         df.to_csv(out_csv, index=False)
 
 
-    def _purge_cached_epic_files(self, epic_num: str):
-        # Lightkurve cache filenames vary, so we glob EPIC id.
-        patterns = [
-            str(self.cache_dir / f"*{epic_num}*.fits"),
-            str(self.cache_dir / f"*{epic_num}*.fits.gz"),
-        ]
-        for p in patterns:
-            for fp in glob.glob(p):
-                try:
-                    os.remove(fp)
-                except OSError:
-                    pass
-
-    def _download_lc_with_retry(self, sr, epic_num: str):
+    def _download_lc_with_retry(self, sr):
         # 1st attempt
         try:
-            return sr[0].download(download_dir=str(self.cache_dir)).remove_nans().normalize()
+            return sr[0].download().remove_nans().normalize()
         except Exception:
-            # purge and retry once
-            self._purge_cached_epic_files(epic_num)
-            return sr[0].download(download_dir=str(self.cache_dir)).remove_nans().normalize()
+            return sr[0].download().remove_nans().normalize()
 
 
     def _clean_epic(self, epic: str) -> str:

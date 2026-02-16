@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
@@ -136,15 +139,20 @@ class K2_NoiseHandler:
         query: str,
         limit: int = 50,
         exptime: Optional[Union[str, float]] = None,  # "long" / "short" or seconds
+        download_dir: Optional[str] = None,
+        cache_only: bool = False,
     ) -> Dict[str, Any]:
         """
         Download the best K2 lightcurve for a target.
 
         Returns:
             {
+                "status": "ok" | "cache_miss",
                 "lc": LightCurve,
                 "author": str,
-                "search_result": dict (serializable metadata about the search)
+                "search_result": dict (serializable metadata about the search),
+                "cache_path": Optional[str],
+                "cache_source": str,
             }
         """
         sr = lk.search_lightcurve(
@@ -160,10 +168,65 @@ class K2_NoiseHandler:
 
         picked = self.choose_best(sr)
         best = picked["product"]
-        lc = best.download()
+        epic = self._infer_epic_id(query=query, selected_row=best)
         author = self._author_as_str(picked.get("author", ""))
+        mission = self._extract_search_field(best, "mission", default="")
+        campaign = self._extract_search_field(best, "campaign", default="")
+        print(f"[select] EPIC {epic} author={author} mission={mission} campaign={campaign}")
+
         search_meta = self._serialize_search_result(sr, picked["index"], picked["reason"], query=query)
-        return {"lc": lc, "author": author, "search_result": search_meta}
+
+        if cache_only:
+            cached_path = self._find_cached_product_path(best, download_dir=download_dir)
+            if cached_path is None:
+                print(f"[lc path] EPIC {epic} -> None")
+                print(f"[lc path] EPIC {epic} -> no local cached file for selected product; download_dir={download_dir}")
+                print(f"[cache source] source=custom_or_unknown")
+                return {
+                    "status": "cache_miss",
+                    "lc": None,
+                    "author": author,
+                    "search_result": search_meta,
+                    "cache_path": None,
+                    "cache_source": "custom_or_unknown",
+                }
+            lc = lk.read(cached_path)
+            path = str(cached_path)
+            print(f"[lc path] EPIC {epic} -> {path}")
+            print(f"[cache source] source={self._cache_source_from_path(path)}")
+            return {
+                "status": "ok",
+                "lc": lc,
+                "author": author,
+                "search_result": search_meta,
+                "cache_path": path,
+                "cache_source": self._cache_source_from_path(path),
+            }
+
+        if download_dir is None:
+            lc = best.download()
+        else:
+            lc = best.download(download_dir=download_dir)
+
+        has_path_attr = any(hasattr(lc, attr) for attr in ("path", "local_path"))
+        path = self._extract_download_path(lc)
+        print(f"[lc path] EPIC {epic} -> {path}")
+        if not has_path_attr:
+            print(f"[lc path] EPIC {epic} -> no path attribute; download_dir={download_dir}")
+        elif path is None:
+            print(f"[lc path] EPIC {epic} -> path attribute exists but is empty; download_dir={download_dir}")
+        print(f"[cache source] source={self._cache_source_from_path(path)}")
+
+        if lc is None:
+            raise ValueError(f"Download returned no light curve for query={query!r}")
+        return {
+            "status": "ok",
+            "lc": lc,
+            "author": author,
+            "search_result": search_meta,
+            "cache_path": path,
+            "cache_source": self._cache_source_from_path(path),
+        }
 
     def clean(
         self,
@@ -728,6 +791,105 @@ class K2_NoiseHandler:
                 return ""
             return str(v[0])
         return str(v)
+
+    def _extract_download_path(self, downloaded_obj: Any) -> Optional[str]:
+        if downloaded_obj is None:
+            return None
+        for attr in ("path", "local_path"):
+            try:
+                p = getattr(downloaded_obj, attr, None)
+            except Exception:
+                p = None
+            if p is not None and str(p).strip() != "":
+                return str(p)
+        return None
+
+    def _cache_source_from_path(self, path: Optional[str]) -> str:
+        if path is None:
+            return "custom_or_unknown"
+        p = str(path).lower().replace("/", "\\")
+        if "\\mastdownload\\" in p:
+            return "astroquery_mastDownload"
+        if "\\.lightkurve\\cache\\" in p:
+            return "lightkurve_cache"
+        return "custom_or_unknown"
+
+    def _infer_epic_id(self, query: str, selected_row: Any) -> str:
+        candidates = [
+            query,
+            self._extract_search_field(selected_row, "target_name", default=""),
+            self._extract_search_field(selected_row, "obs_id", default=""),
+        ]
+        for c in candidates:
+            txt = str(self._to_serializable(c))
+            m = re.search(r"(\d{6,})", txt)
+            if m is not None:
+                return str(m.group(1))
+        return str(query)
+
+    def _cache_roots(self, download_dir: Optional[str]) -> List[Path]:
+        roots: List[Path] = []
+        if download_dir is not None and str(download_dir).strip() != "":
+            roots.append(Path(str(download_dir)).expanduser())
+        env_root = os.environ.get("LIGHTKURVE_CACHE_DIR", "")
+        if env_root.strip() != "":
+            roots.append(Path(env_root).expanduser())
+        roots.append(Path.home() / ".lightkurve" / "cache")
+        roots.append(Path.home() / ".lightkurve")
+
+        out: List[Path] = []
+        seen = set()
+        for r in roots:
+            key = str(r).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(r)
+        return out
+
+    def _find_cached_product_path(self, selected_row: Any, download_dir: Optional[str]) -> Optional[Path]:
+        product_filename = str(self._extract_search_field(selected_row, "productFilename", default="")).strip()
+        obs_id = str(self._extract_search_field(selected_row, "obs_id", default="")).strip()
+        obs_collection = str(self._extract_search_field(selected_row, "obs_collection", default="")).strip()
+        mission = str(self._extract_search_field(selected_row, "mission", default="")).strip()
+        mission_fallback = mission.split(" ")[0] if mission else "K2"
+        collection = obs_collection if obs_collection else mission_fallback
+
+        if product_filename == "":
+            return None
+
+        roots = self._cache_roots(download_dir=download_dir)
+        candidates: List[Path] = []
+        for root in roots:
+            candidates.append(root / product_filename)
+            if obs_id != "":
+                candidates.append(root / collection / obs_id / product_filename)
+                candidates.append(root / "mastDownload" / collection / obs_id / product_filename)
+            if root.name.lower() == "mastdownload" and obs_id != "":
+                candidates.append(root / collection / obs_id / product_filename)
+
+        for c in candidates:
+            try:
+                if c.exists() and c.is_file():
+                    return c
+            except Exception:
+                pass
+
+        # Narrow glob fallback for common mast cache layouts.
+        for root in roots:
+            try:
+                patterns = [
+                    f"mastDownload/*/*/{product_filename}",
+                    f"*/*/{product_filename}",
+                    product_filename,
+                ]
+                for pat in patterns:
+                    for match in root.glob(pat):
+                        if match.exists() and match.is_file():
+                            return match
+            except Exception:
+                continue
+        return None
 
     def _serialize_search_result(
         self,
