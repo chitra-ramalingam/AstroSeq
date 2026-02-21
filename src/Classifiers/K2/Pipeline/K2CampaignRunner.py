@@ -57,9 +57,15 @@ class K2CampaignRunner:
         p.add_argument("--periodic-hit-rate-shape-threshold", type=float, default=0.30)
         p.add_argument("--periodic-coverage-threshold", type=float, default=0.85)
 
+        p.add_argument("--whiteness_alpha", type=float, default=None, help="Whiteness p-value alpha threshold.")
         p.add_argument("--noisy-whiteness-threshold", type=float, default=None)
         p.add_argument("--noisy-step-threshold", type=float, default=None)
         p.add_argument("--cache_only", action="store_true", help="Use local cache only; never download missing products.")
+        p.add_argument(
+            "--retriage_batch",
+            action="store_true",
+            help="Recompute triage/labels from stored batch_results metrics only (no downloads), then rebuild leaderboards.",
+        )
         p.add_argument(
             "--rebuild_leaderboards",
             action="store_true",
@@ -96,6 +102,7 @@ class K2CampaignRunner:
             periodic_shape_threshold=args.periodic_shape_threshold,
             periodic_hit_rate_shape_threshold=args.periodic_hit_rate_shape_threshold,
             periodic_coverage_threshold=args.periodic_coverage_threshold,
+            whiteness_alpha=args.whiteness_alpha,
             noisy_whiteness_threshold=args.noisy_whiteness_threshold,
             noisy_step_threshold=args.noisy_step_threshold,
             cache_only=args.cache_only,
@@ -103,15 +110,20 @@ class K2CampaignRunner:
 
     def run(self) -> None:
         args = self.build_parser().parse_args()
-        if args.rebuild_leaderboards:
+        if args.rebuild_leaderboards or args.retriage_batch:
             batch_csv = args.input if args.input is not None else (args.out_dir / "batch_results.csv")
             if (args.input is not None) and (not batch_csv.exists()) and (not batch_csv.is_absolute()):
                 alt = args.out_dir / batch_csv
                 if alt.exists():
                     batch_csv = alt
             runner = self._build_batch_runner(args=args, queries=[], input_csv=None)
+            if args.retriage_batch:
+                retriage = runner.retriage_batch_results(batch_csv=batch_csv, write=True)
+                batch_csv = retriage["batch_results_csv"]
             out = runner.rebuild_leaderboards(batch_csv=batch_csv)
             runner._print_finalize_summary(results_df=out["results_df"])
+            if args.retriage_batch:
+                print(f"Retriaged from: {batch_csv}")
             print(f"Rebuilt from: {out['batch_results_csv']}")
             print(f"leaderboard_periodic.csv: {out['leaderboard_periodic_csv']}")
             print(f"leaderboard_sparse.csv: {out['leaderboard_sparse_csv']}")
@@ -135,4 +147,3 @@ class K2CampaignRunner:
         print(f"leaderboard_sparse.csv: {out['leaderboard_sparse_csv']}")
         print(f"leaderboard_top_shape.csv: {out['leaderboard_top_shape_csv']}")
         print(f"leaderboard_top_snr.csv: {out['leaderboard_top_snr_csv']}")
-

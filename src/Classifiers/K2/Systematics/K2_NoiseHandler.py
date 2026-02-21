@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 from dataclasses import dataclass, replace
@@ -23,7 +24,7 @@ class K2NoiseMetrics:
     robust_sigma: float
     outlier_rate_6sigma: float
     step_score: float
-    whiteness_score: float  # lower is more "white"
+    whiteness_score: float  # interpreted by K2NoiseConfig.whiteness_score_definition
     outlier_rate_global: float = np.nan
     notes: str = ""
 
@@ -38,11 +39,23 @@ class K2NoiseConfig:
     catastrophic_outlier_rate_6sigma: float = 0.10
     max_step_score: float = 1.5
     max_whiteness_score: Optional[float] = None
+    whiteness_score_definition: str = "pvalue"  # "pvalue" or "statistic"
+    whiteness_alpha: Optional[float] = None
 
     def __post_init__(self) -> None:
         self.mode = str(self.mode).lower().strip()
         if self.mode not in {"strict", "discovery"}:
             raise ValueError(f"Unsupported K2NoiseConfig mode: {self.mode!r}. Expected 'strict' or 'discovery'.")
+        self.whiteness_score_definition = str(self.whiteness_score_definition).lower().strip()
+        if self.whiteness_score_definition not in {"pvalue", "statistic"}:
+            raise ValueError(
+                f"Unsupported whiteness_score_definition: {self.whiteness_score_definition!r}. "
+                "Expected 'pvalue' or 'statistic'."
+            )
+        if self.whiteness_alpha is not None:
+            self.whiteness_alpha = float(self.whiteness_alpha)
+            if (not np.isfinite(self.whiteness_alpha)) or (self.whiteness_alpha <= 0.0) or (self.whiteness_alpha >= 1.0):
+                raise ValueError("whiteness_alpha must be a finite value in (0, 1).")
         self.apply_mode_preset(overwrite=False)
 
     def apply_mode_preset(self, overwrite: bool = True) -> None:
@@ -50,15 +63,38 @@ class K2NoiseConfig:
             raise ValueError(f"Unsupported K2NoiseConfig mode: {self.mode!r}. Expected 'strict' or 'discovery'.")
         if self.mode == "discovery":
             preset_outlier = 0.08
-            preset_whiteness = 0.8
+            preset_whiteness_stat = 0.8
+            preset_whiteness_alpha = 0.05
         else:
             preset_outlier = 0.02
-            preset_whiteness = 0.6
+            preset_whiteness_stat = 0.6
+            preset_whiteness_alpha = 0.01
 
         if overwrite or (self.max_outlier_rate_6sigma is None):
             self.max_outlier_rate_6sigma = preset_outlier
-        if overwrite or (self.max_whiteness_score is None):
-            self.max_whiteness_score = preset_whiteness
+        if self.whiteness_score_definition == "pvalue":
+            if overwrite or (self.whiteness_alpha is None):
+                self.whiteness_alpha = preset_whiteness_alpha
+        else:
+            if overwrite or (self.max_whiteness_score is None):
+                self.max_whiteness_score = preset_whiteness_stat
+
+
+class K2PipelineStageError(RuntimeError):
+    def __init__(
+        self,
+        stage: str,
+        exc: Exception,
+        author_selected: str = "",
+        campaign_selected: str = "",
+    ) -> None:
+        self.stage = str(stage)
+        self.error_type = type(exc).__name__
+        self.error_msg = str(exc)[:200]
+        self.author_selected = str(author_selected)
+        self.campaign_selected = str(campaign_selected)
+        super().__init__(f"{self.stage}:{self.error_type}:{self.error_msg}")
+        self.__cause__ = exc
 
 
 class K2_NoiseHandler:
@@ -95,6 +131,8 @@ class K2_NoiseHandler:
         catastrophic_outlier_rate_6sigma: Optional[float] = None,
         max_step_score: Optional[float] = None,
         max_whiteness_score: Optional[float] = None,
+        whiteness_score_definition: Optional[str] = None,
+        whiteness_alpha: Optional[float] = None,
     ):
         self.author_priority = author_priority
         self.quality_strict = quality_strict
@@ -105,7 +143,14 @@ class K2_NoiseHandler:
         cfg = replace(noise_config) if noise_config is not None else K2NoiseConfig()
         if mode is not None:
             cfg.mode = str(mode).lower().strip()
-            cfg.apply_mode_preset(overwrite=True)
+        if whiteness_score_definition is not None:
+            cfg.whiteness_score_definition = str(whiteness_score_definition).lower().strip()
+        cfg.whiteness_score_definition = str(cfg.whiteness_score_definition).lower().strip()
+        if cfg.whiteness_score_definition not in {"pvalue", "statistic"}:
+            raise ValueError(
+                f"Unsupported whiteness_score_definition: {cfg.whiteness_score_definition!r}. "
+                "Expected 'pvalue' or 'statistic'."
+            )
         if min_points is not None:
             cfg.min_points = int(min_points)
         if min_baseline_days is not None:
@@ -120,6 +165,12 @@ class K2_NoiseHandler:
             cfg.max_step_score = float(max_step_score)
         if max_whiteness_score is not None:
             cfg.max_whiteness_score = float(max_whiteness_score)
+        if whiteness_alpha is not None:
+            cfg.whiteness_alpha = float(whiteness_alpha)
+        if cfg.whiteness_alpha is not None:
+            if (not np.isfinite(cfg.whiteness_alpha)) or (cfg.whiteness_alpha <= 0.0) or (cfg.whiteness_alpha >= 1.0):
+                raise ValueError("whiteness_alpha must be a finite value in (0, 1).")
+        cfg.apply_mode_preset(overwrite=False)
         self.noise_config = cfg
 
         # Backwards-compatible mirrors for existing code that reads these attrs.
@@ -155,23 +206,28 @@ class K2_NoiseHandler:
                 "cache_source": str,
             }
         """
-        sr = lk.search_lightcurve(
-            query,
-            mission="K2",
-            author=list(self.author_priority),
-            limit=limit,
-            exptime=exptime,
-        )
+        author = ""
+        campaign = ""
+        try:
+            sr = lk.search_lightcurve(
+                query,
+                mission="K2",
+                author=list(self.author_priority),
+                limit=limit,
+                exptime=exptime,
+            )
+        except Exception as e:
+            raise K2PipelineStageError(stage="search", exc=e)
 
         if len(sr) == 0:
-            raise ValueError(f"No K2 lightcurve found for query={query!r}")
+            raise K2PipelineStageError(stage="search", exc=ValueError(f"No K2 lightcurve found for query={query!r}"))
 
         picked = self.choose_best(sr)
         best = picked["product"]
         epic = self._infer_epic_id(query=query, selected_row=best)
         author = self._author_as_str(picked.get("author", ""))
         mission = self._extract_search_field(best, "mission", default="")
-        campaign = self._extract_search_field(best, "campaign", default="")
+        campaign = str(self._extract_search_field(best, "campaign", default=""))
         print(f"[select] EPIC {epic} author={author} mission={mission} campaign={campaign}")
 
         search_meta = self._serialize_search_result(sr, picked["index"], picked["reason"], query=query)
@@ -186,11 +242,21 @@ class K2_NoiseHandler:
                     "status": "cache_miss",
                     "lc": None,
                     "author": author,
+                    "author_selected": author,
+                    "campaign_selected": campaign,
                     "search_result": search_meta,
                     "cache_path": None,
                     "cache_source": "custom_or_unknown",
                 }
-            lc = lk.read(cached_path)
+            try:
+                lc = lk.read(cached_path)
+            except Exception as e:
+                raise K2PipelineStageError(
+                    stage="load",
+                    exc=e,
+                    author_selected=author,
+                    campaign_selected=campaign,
+                )
             path = str(cached_path)
             print(f"[lc path] EPIC {epic} -> {path}")
             print(f"[cache source] source={self._cache_source_from_path(path)}")
@@ -198,15 +264,25 @@ class K2_NoiseHandler:
                 "status": "ok",
                 "lc": lc,
                 "author": author,
+                "author_selected": author,
+                "campaign_selected": campaign,
                 "search_result": search_meta,
                 "cache_path": path,
                 "cache_source": self._cache_source_from_path(path),
             }
 
-        if download_dir is None:
-            lc = best.download()
-        else:
-            lc = best.download(download_dir=download_dir)
+        try:
+            if download_dir is None:
+                lc = best.download()
+            else:
+                lc = best.download(download_dir=download_dir)
+        except Exception as e:
+            raise K2PipelineStageError(
+                stage="download",
+                exc=e,
+                author_selected=author,
+                campaign_selected=campaign,
+            )
 
         has_path_attr = any(hasattr(lc, attr) for attr in ("path", "local_path"))
         path = self._extract_download_path(lc)
@@ -218,11 +294,18 @@ class K2_NoiseHandler:
         print(f"[cache source] source={self._cache_source_from_path(path)}")
 
         if lc is None:
-            raise ValueError(f"Download returned no light curve for query={query!r}")
+            raise K2PipelineStageError(
+                stage="download",
+                exc=ValueError(f"Download returned no light curve for query={query!r}"),
+                author_selected=author,
+                campaign_selected=campaign,
+            )
         return {
             "status": "ok",
             "lc": lc,
             "author": author,
+            "author_selected": author,
+            "campaign_selected": campaign,
             "search_result": search_meta,
             "cache_path": path,
             "cache_source": self._cache_source_from_path(path),
@@ -548,7 +631,9 @@ class K2_NoiseHandler:
         df = np.diff(f)
         step = float(np.nanmedian(np.abs(df)) / (rsig + 1e-12))
 
-        # whiteness_score: absolute lag-1 autocorr of residuals (lower is better)
+        # whiteness_score:
+        # - statistic mode: absolute lag-1 autocorr (lower is whiter)
+        # - pvalue mode: two-sided normal approximation p-value for lag-1 autocorr (higher is whiter)
         fr = f - med
         if np.all(~np.isfinite(fr)) or np.nanstd(fr) == 0:
             w = np.nan
@@ -558,7 +643,16 @@ class K2_NoiseHandler:
             fr0 = fr0 - np.nanmean(fr0)
             fr1 = fr1 - np.nanmean(fr1)
             denom = (np.nanstd(fr0) * np.nanstd(fr1)) + 1e-12
-            w = float(np.abs(np.nanmean(fr0 * fr1) / denom))
+            rho = float(np.nanmean(fr0 * fr1) / denom)
+            if self.noise_config.whiteness_score_definition == "pvalue":
+                z = abs(rho) * np.sqrt(max(float(n - 1), 1.0))
+                w = float(math.erfc(float(z) / np.sqrt(2.0)))
+            else:
+                w = float(np.abs(rho))
+        print(
+            f"[whiteness calc] func=_metrics_single test={self.whiteness_definition()} "
+            f"value_type={self.noise_config.whiteness_score_definition} lags=[1] value={w}"
+        )
 
         return K2NoiseMetrics(
             n_points=n,
@@ -596,10 +690,11 @@ class K2_NoiseHandler:
         ]
 
         if np.isfinite(m.whiteness_score):
-            margins.append(
-                (float(cfg.max_whiteness_score) - float(m.whiteness_score))
-                / max(float(cfg.max_whiteness_score), 1e-12)
-            )
+            wt = float(self.whiteness_threshold())
+            if cfg.whiteness_score_definition == "pvalue":
+                margins.append((float(m.whiteness_score) - wt) / max(wt, 1e-12))
+            else:
+                margins.append((wt - float(m.whiteness_score)) / max(wt, 1e-12))
 
         score = float(np.nanmin(np.asarray(margins, dtype=float)))
         return score if np.isfinite(score) else -np.inf
@@ -617,7 +712,10 @@ class K2_NoiseHandler:
             "max_outlier_rate_6sigma": float(cfg.max_outlier_rate_6sigma),
             "catastrophic_outlier_rate_6sigma": float(cfg.catastrophic_outlier_rate_6sigma),
             "max_step_score": float(cfg.max_step_score),
-            "max_whiteness_score": float(cfg.max_whiteness_score),
+            "max_whiteness_score": float(cfg.max_whiteness_score) if cfg.max_whiteness_score is not None else np.nan,
+            "whiteness_score_definition": str(cfg.whiteness_score_definition),
+            "whiteness_alpha": float(cfg.whiteness_alpha) if cfg.whiteness_alpha is not None else np.nan,
+            "whiteness_threshold": float(self.whiteness_threshold()),
         }
         values: Dict[str, float] = {
             "n_points": float(m.n_points),
@@ -640,10 +738,29 @@ class K2_NoiseHandler:
             fail_reasons.append(f"outlier_rate_6sigma>{cfg.max_outlier_rate_6sigma}")
         if (not np.isfinite(m.step_score)) or (m.step_score > cfg.max_step_score):
             fail_reasons.append(f"step_score>{cfg.max_step_score}")
-        if np.isfinite(m.whiteness_score) and (m.whiteness_score > cfg.max_whiteness_score):
-            fail_reasons.append(f"whiteness_score={m.whiteness_score:.6g}>{cfg.max_whiteness_score}")
+        if np.isfinite(m.whiteness_score):
+            wt = float(self.whiteness_threshold())
+            if cfg.whiteness_score_definition == "pvalue":
+                if m.whiteness_score < wt:
+                    fail_reasons.append(f"whiteness_pvalue={m.whiteness_score:.6g}<{wt}")
+            elif m.whiteness_score > wt:
+                fail_reasons.append(f"whiteness_score={m.whiteness_score:.6g}>{wt}")
 
         return {"fail_reasons": fail_reasons, "thresholds": thresholds, "values": values}
+
+    def whiteness_definition(self) -> str:
+        if self.noise_config.whiteness_score_definition == "pvalue":
+            return "lag1_autocorr_pvalue_normal_approx"
+        return "lag1_abs_autocorr_statistic"
+
+    def whiteness_threshold(self) -> float:
+        if self.noise_config.whiteness_score_definition == "pvalue":
+            if self.noise_config.whiteness_alpha is None:
+                return 0.01
+            return float(self.noise_config.whiteness_alpha)
+        if self.noise_config.max_whiteness_score is None:
+            return float("inf")
+        return float(self.noise_config.max_whiteness_score)
 
     def score_segments(self, metrics: List[K2NoiseMetrics], policy: str) -> float:
         """

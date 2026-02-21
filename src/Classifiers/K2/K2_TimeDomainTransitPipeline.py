@@ -11,6 +11,7 @@ from src.Classifiers.K2.Systematics.K2NoiseLoader import (
     K2NoiseLoader,
     K2NoiseLoaderConfig,
 )
+from src.Classifiers.K2.Systematics.K2_NoiseHandler import K2PipelineStageError
 from src.Classifiers.K2.Systematics.K2_SNR import K2SNR
 
 
@@ -427,42 +428,93 @@ class K2TimeDomainTransitPipeline:
             out["shape_rank_method"] = "time_domain"
             return {"summary": out, "candidates": []}
 
-        fetched = self.loader.handler.fetch_best(
-            query=q,
-            limit=limit or self.loader.loader_config.limit,
-            exptime=exptime,
-            cache_only=bool(self.loader.loader_config.cache_only if cache_only is None else cache_only),
-        )
+        try:
+            fetched = self.loader.handler.fetch_best(
+                query=q,
+                limit=limit or self.loader.loader_config.limit,
+                exptime=exptime,
+                cache_only=bool(self.loader.loader_config.cache_only if cache_only is None else cache_only),
+            )
+        except K2PipelineStageError as e:
+            out = dict(noise_row)
+            out.update(
+                {
+                    "status": "error",
+                    "error_stage": str(e.stage),
+                    "error_type": str(e.error_type),
+                    "error_msg": str(e.error_msg),
+                    "author_selected": str(e.author_selected),
+                    "campaign_selected": str(e.campaign_selected),
+                    "n_candidates": 0,
+                    "best_shape_score": np.nan,
+                    "shape_rank_method": "time_domain",
+                }
+            )
+            return {"summary": out, "candidates": []}
+        except Exception as e:
+            out = dict(noise_row)
+            out.update(
+                {
+                    "status": "error",
+                    "error_stage": "download",
+                    "error_type": type(e).__name__,
+                    "error_msg": str(e)[:200],
+                    "n_candidates": 0,
+                    "best_shape_score": np.nan,
+                    "shape_rank_method": "time_domain",
+                }
+            )
+            return {"summary": out, "candidates": []}
+
         if str(fetched.get("status", "ok")).lower() != "ok":
             out = dict(noise_row)
             out["status"] = str(fetched.get("status", "error"))
+            out["author_selected"] = str(fetched.get("author_selected", fetched.get("author", out.get("author", ""))))
+            out["campaign_selected"] = str(fetched.get("campaign_selected", out.get("campaign_selected", "")))
             out["n_candidates"] = 0
             out["best_shape_score"] = np.nan
             out["shape_rank_method"] = "time_domain"
             return {"summary": out, "candidates": []}
 
-        # Strict quality filtering is forced here, and we disable symmetric sigma clipping.
-        cleaned = self.loader.handler.clean(
-            fetched["lc"],
-            normalize=False,
-            remove_nans=True,
-            quality_mask=True,
-            sigma_clip=False,
-            flatten=False,
-        )
+        try:
+            # Strict quality filtering is forced here, and we disable symmetric sigma clipping.
+            cleaned = self.loader.handler.clean(
+                fetched["lc"],
+                normalize=False,
+                remove_nans=True,
+                quality_mask=True,
+                sigma_clip=False,
+                flatten=False,
+            )
 
-        pre = self.preprocessor.preprocess(cleaned["time"], cleaned["flux"])
-        t = pre["time"]
-        x = pre["flux"]
-        s = pre["local_sigma"]
+            pre = self.preprocessor.preprocess(cleaned["time"], cleaned["flux"])
+            t = pre["time"]
+            x = pre["flux"]
+            s = pre["local_sigma"]
 
-        candidates = self.ranker.rank_windows(
-            query=q,
-            author=str(fetched.get("author", "")),
-            time=t,
-            flux=x,
-            sigma_local=s,
-        )
+            candidates = self.ranker.rank_windows(
+                query=q,
+                author=str(fetched.get("author", "")),
+                time=t,
+                flux=x,
+                sigma_local=s,
+            )
+        except Exception as e:
+            out = dict(noise_row)
+            out.update(
+                {
+                    "status": "error",
+                    "error_stage": "clean",
+                    "error_type": type(e).__name__,
+                    "error_msg": str(e)[:200],
+                    "author_selected": str(fetched.get("author_selected", fetched.get("author", out.get("author", "")))),
+                    "campaign_selected": str(fetched.get("campaign_selected", out.get("campaign_selected", ""))),
+                    "n_candidates": 0,
+                    "best_shape_score": np.nan,
+                    "shape_rank_method": "time_domain",
+                }
+            )
+            return {"summary": out, "candidates": []}
 
         cand_rows = [c.to_dict() for c in candidates]
         best = float(candidates[0].shape_score) if len(candidates) > 0 else float("nan")

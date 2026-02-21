@@ -47,6 +47,8 @@ class K2BatchRunner:
         periodic_shape_threshold: float = 0.75,
         periodic_hit_rate_shape_threshold: float = 0.30,
         periodic_coverage_threshold: float = 0.85,
+        whiteness_alpha: Optional[float] = None,
+        whiteness_score_definition: str = "pvalue",
         noisy_whiteness_threshold: Optional[float] = None,
         noisy_step_threshold: Optional[float] = None,
         resume: bool = False,
@@ -84,7 +86,11 @@ class K2BatchRunner:
             mode=str(noise_mode).strip().lower(),
             cache_only=self.cache_only,
         )
-        self.noise_config = K2NoiseConfig(mode=self.loader_config.mode)
+        self.noise_config = K2NoiseConfig(
+            mode=self.loader_config.mode,
+            whiteness_alpha=whiteness_alpha,
+            whiteness_score_definition=whiteness_score_definition,
+        )
         self.noise_loader = K2NoiseLoader(loader_config=self.loader_config, noise_config=self.noise_config)
         self.detector = K2TimeDomainTransitPipeline(loader=self.noise_loader)
         self.validator = K2PeriodValidator(
@@ -99,9 +105,16 @@ class K2BatchRunner:
             float(noisy_whiteness_threshold)
             if noisy_whiteness_threshold is not None
             else (
-                float(self.noise_config.max_whiteness_score)
-                if self.noise_config.max_whiteness_score is not None
-                else float("inf")
+                float(self.noise_config.whiteness_alpha)
+                if (
+                    str(getattr(self.noise_config, "whiteness_score_definition", "statistic")).lower() == "pvalue"
+                    and getattr(self.noise_config, "whiteness_alpha", None) is not None
+                )
+                else (
+                    float(self.noise_config.max_whiteness_score)
+                    if self.noise_config.max_whiteness_score is not None
+                    else float("inf")
+                )
             )
         )
         self.noisy_step_threshold = (
@@ -109,6 +122,8 @@ class K2BatchRunner:
             if noisy_step_threshold is not None
             else float(self.noise_config.max_step_score)
         )
+        self._whiteness_debug_limit = 20
+        self._whiteness_debug_printed = 0
 
     @staticmethod
     def _as_float(value: Any, default: float = float("nan")) -> float:
@@ -193,6 +208,10 @@ class K2BatchRunner:
         status = str(triage.get("status", "")).strip().lower()
         usable = self._as_bool(triage.get("usable", False))
         why_not = str(triage.get("why_not_usable", "")).strip()
+        whiteness_definition = str(
+            triage.get("whiteness_definition", getattr(self.noise_loader.handler, "whiteness_definition", lambda: "")())
+        ).lower()
+        whiteness_is_pvalue = "pvalue" in whiteness_definition
         if status != "ok":
             reasons.append(f"triage_status={status or 'unknown'}")
         if (not usable) and why_not:
@@ -201,9 +220,33 @@ class K2BatchRunner:
         if np.isfinite(step) and np.isfinite(self.noisy_step_threshold) and step > self.noisy_step_threshold:
             reasons.append(f"step_score>{self.noisy_step_threshold:.3f} ({step:.3f})")
         white = self._as_float(triage.get("whiteness_score", float("nan")))
-        if np.isfinite(white) and np.isfinite(self.noisy_whiteness_threshold) and white > self.noisy_whiteness_threshold:
-            reasons.append(f"whiteness_score>{self.noisy_whiteness_threshold:.3f} ({white:.3f})")
+        if np.isfinite(white) and np.isfinite(self.noisy_whiteness_threshold):
+            if whiteness_is_pvalue:
+                if white < self.noisy_whiteness_threshold:
+                    reasons.append(f"whiteness_pvalue<{self.noisy_whiteness_threshold:.3f} ({white:.3f})")
+            elif white > self.noisy_whiteness_threshold:
+                reasons.append(f"whiteness_score>{self.noisy_whiteness_threshold:.3f} ({white:.3f})")
         return reasons
+
+    def _debug_whiteness_gate(self, query: str, triage: Dict[str, Any]) -> None:
+        if self._whiteness_debug_printed >= self._whiteness_debug_limit:
+            return
+        white = self._as_float(triage.get("whiteness_score", float("nan")))
+        definition = str(
+            triage.get("whiteness_definition", getattr(self.noise_loader.handler, "whiteness_definition", lambda: "unknown")())
+        )
+        is_pvalue = "pvalue" in definition.lower()
+        if np.isfinite(white) and np.isfinite(self.noisy_whiteness_threshold):
+            gate_pass = (white >= self.noisy_whiteness_threshold) if is_pvalue else (white <= self.noisy_whiteness_threshold)
+        else:
+            gate_pass = False
+        status = "PASS" if gate_pass else "FAIL"
+        n = self._whiteness_debug_printed + 1
+        print(
+            f"[whiteness debug {n}/{self._whiteness_debug_limit}] "
+            f"{query} whiteness_score={white} definition={definition} triage={status}"
+        )
+        self._whiteness_debug_printed += 1
 
     @staticmethod
     def _best_event_metrics(events_df: pd.DataFrame) -> Tuple[float, float]:
@@ -395,10 +438,15 @@ class K2BatchRunner:
     def _tokenize_reasons(raw: Any) -> List[str]:
         if raw is None:
             return []
+        try:
+            if pd.isna(raw):
+                return []
+        except Exception:
+            pass
         out: List[str] = []
         for tok in str(raw).split(";"):
             t = tok.strip()
-            if t != "":
+            if t != "" and t.lower() != "nan":
                 out.append(t)
         return out
 
@@ -414,6 +462,105 @@ class K2BatchRunner:
         if len(reasons) == 0:
             return pd.Series(dtype=int)
         return pd.Series(reasons, dtype="string").value_counts()
+
+    def _strip_retriage_managed_reasons(self, raw: Any) -> List[str]:
+        kept: List[str] = []
+        for r in self._tokenize_reasons(raw):
+            rl = r.lower().strip()
+            if rl.startswith("whiteness_score"):
+                continue
+            if rl.startswith("whiteness_pvalue"):
+                continue
+            if rl.startswith("step_score>"):
+                continue
+            if rl.startswith("usable=false:"):
+                continue
+            if rl.startswith("triage_status="):
+                continue
+            kept.append(r)
+        return kept
+
+    def retriage_batch_results(
+        self,
+        batch_csv: Optional[Union[str, Path]] = None,
+        write: bool = True,
+    ) -> Dict[str, Any]:
+        batch_path = Path(batch_csv) if batch_csv is not None else (self.out_dir / "batch_results.csv")
+        if not batch_path.exists():
+            raise FileNotFoundError(f"batch_results.csv not found: {batch_path}")
+
+        df = pd.read_csv(batch_path)
+        self._require_columns(df, ["triage_status"], context="retriage")
+
+        if "triage_step_score" not in df.columns:
+            df["triage_step_score"] = np.nan
+        if "triage_whiteness_score" not in df.columns:
+            df["triage_whiteness_score"] = np.nan
+        if "triage_why_not_usable" not in df.columns:
+            df["triage_why_not_usable"] = ""
+        if "triage_whiteness_definition" not in df.columns:
+            df["triage_whiteness_definition"] = ""
+        if "label" not in df.columns:
+            df["label"] = ""
+        if "label_reason" not in df.columns:
+            df["label_reason"] = ""
+        if "n_events" not in df.columns:
+            df["n_events"] = 0
+
+        for idx in df.index:
+            status = str(df.at[idx, "triage_status"]).strip().lower()
+            step = self._as_float(df.at[idx, "triage_step_score"], default=float("nan"))
+            white = self._as_float(df.at[idx, "triage_whiteness_score"], default=float("nan"))
+
+            wdef_raw = str(df.at[idx, "triage_whiteness_definition"]).strip()
+            if (wdef_raw == "") or (wdef_raw.lower() == "nan"):
+                wdef_raw = self.noise_loader.handler.whiteness_definition()
+            whiteness_is_pvalue = "pvalue" in wdef_raw.lower()
+            df.at[idx, "triage_whiteness_definition"] = wdef_raw
+
+            reasons = self._strip_retriage_managed_reasons(df.at[idx, "triage_why_not_usable"])
+            if status != "ok":
+                reasons.append(f"triage_status={status or 'unknown'}")
+            if np.isfinite(step) and np.isfinite(self.noisy_step_threshold) and step > self.noisy_step_threshold:
+                reasons.append(f"step_score>{self.noisy_step_threshold:.3f} ({step:.3f})")
+            if np.isfinite(white) and np.isfinite(self.noisy_whiteness_threshold):
+                if whiteness_is_pvalue:
+                    if white < self.noisy_whiteness_threshold:
+                        reasons.append(f"whiteness_pvalue<{self.noisy_whiteness_threshold:.3f} ({white:.3f})")
+                elif white > self.noisy_whiteness_threshold:
+                    reasons.append(f"whiteness_score>{self.noisy_whiteness_threshold:.3f} ({white:.3f})")
+
+            # Deduplicate while preserving order.
+            reasons = list(dict.fromkeys([r for r in reasons if str(r).strip() != ""]))
+
+            triage_usable = (status == "ok") and (len(reasons) == 0)
+            triage_why = ";".join(reasons)
+            df.at[idx, "triage_usable"] = bool(triage_usable)
+            df.at[idx, "triage_why_not_usable"] = triage_why
+
+            triage_dict = {
+                "status": status,
+                "usable": bool(triage_usable),
+                "why_not_usable": triage_why,
+                "step_score": step,
+                "whiteness_score": white,
+                "whiteness_definition": wdef_raw,
+            }
+            hard_reasons = self._hard_fail_reasons(triage_dict)
+            row_for_label = df.loc[idx].to_dict()
+            label, reason = self._label_row(row=row_for_label, hard_reasons=hard_reasons)
+            df.at[idx, "label"] = label
+            df.at[idx, "label_reason"] = reason
+
+        if write:
+            df.to_csv(batch_path, index=False)
+
+        print(
+            f"[retriage] rows={len(df)} "
+            f"whiteness_threshold={self.noisy_whiteness_threshold} "
+            f"definition_default={self.noise_loader.handler.whiteness_definition()}"
+        )
+        return {"batch_results_csv": batch_path, "results_df": df}
 
     def rebuild_leaderboards(
         self,
@@ -481,10 +628,12 @@ class K2BatchRunner:
             print("[summary] total_with_events=0")
             print("[summary] total_with_period_validation_run=0")
             print("[summary] label_counts={'Periodic_candidate': 0, 'Sparse_or_mono': 0, 'Noisy_trash': 0, 'No_events': 0}")
+            print("[summary] triage_error_missing_error_stage=0")
+            print("[summary] top_error_stage_type=[]")
             return
 
         why = results_df.get("triage_why_not_usable", pd.Series([""] * len(results_df))).astype(str)
-        total_skipped_by_whiteness = int(why.str.contains("whiteness_score", case=False, na=False).sum())
+        total_skipped_by_whiteness = int(why.str.contains("whiteness", case=False, na=False).sum())
         total_skipped_by_n_points = int(why.str.contains("n_points<", case=False, na=False).sum())
         n_events = pd.to_numeric(results_df.get("n_events", 0), errors="coerce").fillna(0)
         n_valid = pd.to_numeric(results_df.get("n_periods_validated", 0), errors="coerce").fillna(0)
@@ -501,6 +650,37 @@ class K2BatchRunner:
         print(f"[summary] total_with_events={int((n_events > 0).sum())}")
         print(f"[summary] total_with_period_validation_run={int((n_valid > 0).sum())}")
         print(f"[summary] label_counts={label_counts}")
+        if ("triage_status" not in results_df.columns) or ("error_stage" not in results_df.columns) or ("error_type" not in results_df.columns):
+            print("[summary] triage_error_missing_error_stage=0")
+            print("[summary] top_error_stage_type=[]")
+            return
+
+        err_rows = results_df.copy()
+        triage_status = err_rows["triage_status"].fillna("").astype(str).str.strip().str.lower()
+        err_rows = err_rows.loc[triage_status == "error"].copy()
+        if len(err_rows) == 0:
+            print("[summary] triage_error_missing_error_stage=0")
+            print("[summary] top_error_stage_type=[]")
+            return
+
+        err_rows["error_stage"] = err_rows["error_stage"].fillna("").astype(str).str.strip()
+        err_rows["error_type"] = err_rows["error_type"].fillna("").astype(str).str.strip()
+        missing_stage_count = int((err_rows["error_stage"] == "").sum())
+        print(f"[summary] triage_error_missing_error_stage={missing_stage_count}")
+
+        count_df = err_rows.copy()
+        count_df["error_stage"] = count_df["error_stage"].replace({"": "<missing>"})
+        count_df["error_type"] = count_df["error_type"].replace({"": "<missing>"})
+        counts = (
+            count_df.groupby(["error_stage", "error_type"], dropna=False)
+            .size()
+            .reset_index(name="count")
+            .sort_values("count", ascending=False)
+            .head(10)
+        )
+        print("[summary] top_error_stage_type:")
+        for r in counts.itertuples(index=False):
+            print(f"[summary] error_count stage={r.error_stage} type={r.error_type} count={int(r.count)}")
 
     def _load_progress(self) -> Optional[Dict[str, Any]]:
         if not self.progress_path.exists():
@@ -555,6 +735,28 @@ class K2BatchRunner:
         row_df.reindex(columns=batch_columns).to_csv(batch_csv, mode="a", header=False, index=False)
         return batch_columns
 
+    @staticmethod
+    def _ensure_batch_csv_columns(batch_csv: Path, required_columns: Sequence[str]) -> Optional[List[str]]:
+        if not batch_csv.exists():
+            return None
+        try:
+            df = pd.read_csv(batch_csv)
+        except Exception:
+            try:
+                return pd.read_csv(batch_csv, nrows=0).columns.tolist()
+            except Exception:
+                return None
+
+        missing = [c for c in required_columns if c not in df.columns]
+        if len(missing) == 0:
+            return list(df.columns)
+
+        for c in missing:
+            df[c] = ""
+        df.to_csv(batch_csv, index=False)
+        print(f"[batch schema] Added columns to existing batch_results.csv: {missing}")
+        return list(df.columns)
+
     def run(self) -> Dict[str, Any]:
         queries = self._load_queries()
         if len(queries) == 0:
@@ -571,11 +773,9 @@ class K2BatchRunner:
                 batch_csv.unlink()
 
         batch_columns: Optional[List[str]] = None
+        required_batch_cols = ["error_stage", "error_type", "error_msg", "author_selected", "campaign_selected"]
         if batch_csv.exists():
-            try:
-                batch_columns = pd.read_csv(batch_csv, nrows=0).columns.tolist()
-            except Exception:
-                batch_columns = None
+            batch_columns = self._ensure_batch_csv_columns(batch_csv=batch_csv, required_columns=required_batch_cols)
 
         start_idx = self._resolve_resume_start(queries)
 
@@ -620,7 +820,13 @@ class K2BatchRunner:
                 "triage_n_points": 0,
                 "triage_step_score": float("nan"),
                 "triage_whiteness_score": float("nan"),
+                "triage_whiteness_definition": "",
                 "triage_why_not_usable": "",
+                "error_stage": "",
+                "error_type": "",
+                "error_msg": "",
+                "author_selected": "",
+                "campaign_selected": "",
                 "n_events": 0,
                 "best_shape_score": float("nan"),
                 "best_depth_snr": float("nan"),
@@ -646,6 +852,7 @@ class K2BatchRunner:
             }
             period_rows: List[Dict[str, Any]] = []
             hard_reasons: List[str] = []
+            current_error_stage = "detect"
 
             try:
                 det = self.detector.run_one(
@@ -667,15 +874,29 @@ class K2BatchRunner:
                         "triage_n_points": int(self._as_float(triage.get("n_points", 0.0), default=0.0)),
                         "triage_step_score": self._as_float(triage.get("step_score", float("nan"))),
                         "triage_whiteness_score": self._as_float(triage.get("whiteness_score", float("nan"))),
+                        "triage_whiteness_definition": str(triage.get("whiteness_definition", "")),
                         "triage_why_not_usable": str(triage.get("why_not_usable", "")),
+                        "error_stage": str(triage.get("error_stage", "")),
+                        "error_type": str(triage.get("error_type", "")),
+                        "error_msg": str(triage.get("error_msg", ""))[:200],
+                        "author_selected": str(triage.get("author_selected", triage.get("author", ""))),
+                        "campaign_selected": str(triage.get("campaign_selected", "")),
                         "n_events": int(len(events_df)),
                         "best_shape_score": float(best_shape),
                         "best_depth_snr": float(best_depth_snr),
                     }
                 )
+                if (str(row.get("triage_status", "")).strip().lower() == "error") and (str(row.get("error_stage", "")).strip() == ""):
+                    row["error_stage"] = "detect"
+                if (str(row.get("triage_status", "")).strip().lower() == "error") and (str(row.get("error_type", "")).strip() == ""):
+                    row["error_type"] = "RuntimeError"
+                if (str(row.get("triage_status", "")).strip().lower() == "error") and (str(row.get("error_msg", "")).strip() == ""):
+                    row["error_msg"] = "triage_status=error"
+                self._debug_whiteness_gate(query=query, triage=triage)
 
                 hard_reasons = self._hard_fail_reasons(triage)
                 if len(hard_reasons) == 0 and len(events_df) > 0:
+                    current_error_stage = "period"
                     t, f = self._fetch_clean_time_flux(query=query)
                     proposals = self._propose_periods(events_df)
                     row["n_periods_proposed"] = int(len(proposals))
@@ -734,6 +955,11 @@ class K2BatchRunner:
                     print("[skip] no events detected; skipping period workflow")
 
             except Exception as e:
+                row["triage_status"] = "error"
+                row["triage_usable"] = False
+                row["error_stage"] = str(current_error_stage if str(current_error_stage).strip() != "" else "detect")
+                row["error_type"] = type(e).__name__
+                row["error_msg"] = str(e)[:200]
                 hard_reasons.append(f"pipeline_error={type(e).__name__}:{e}")
                 print(f"[error] {query}: {type(e).__name__}: {e}")
 

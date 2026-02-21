@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from src.Classifiers.K2.Systematics.K2_NoiseHandler import (
+    K2PipelineStageError,
     K2NoiseConfig,
     K2NoiseMetrics,
     K2_NoiseHandler,
@@ -55,6 +56,50 @@ class K2NoiseLoader:
     @staticmethod
     def _metrics_to_dict(m: K2NoiseMetrics) -> Dict[str, Any]:
         return asdict(m)
+
+    @staticmethod
+    def _format_error(exc: Exception) -> Dict[str, str]:
+        return {"error_type": type(exc).__name__, "error_msg": str(exc)[:200]}
+
+    def _error_row(
+        self,
+        base: Dict[str, Any],
+        stage: str,
+        exc: Exception,
+        author_selected: str = "",
+        campaign_selected: str = "",
+        status: str = "error",
+        search_result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if isinstance(exc, K2PipelineStageError):
+            err = {"error_type": str(exc.error_type), "error_msg": str(exc.error_msg)[:200]}
+        else:
+            err = self._format_error(exc)
+        row = dict(base)
+        row.update(
+            {
+                "status": str(status),
+                "error_stage": str(stage),
+                "error_type": err["error_type"],
+                "error_msg": err["error_msg"],
+                "author_selected": str(author_selected),
+                "campaign_selected": str(campaign_selected),
+                "author": str(author_selected),
+                "search_result": search_result if search_result is not None else {},
+                "why_not_usable": f"{stage}:{err['error_type']}",
+                "notes": f"{stage}:{err['error_type']}",
+                "n_points": 0,
+                "baseline_days": 0.0,
+                "duty_cycle": 0.0,
+                "mad": np.nan,
+                "robust_sigma": np.nan,
+                "outlier_rate_6sigma": np.nan,
+                "outlier_rate_global": np.nan,
+                "step_score": np.nan,
+                "whiteness_score": np.nan,
+            }
+        )
+        return row
 
     def run_queries(
         self,
@@ -109,6 +154,9 @@ class K2NoiseLoader:
             "query": query,
             "status": "ok",
             "author": "",
+            "author_selected": "",
+            "campaign_selected": "",
+            "whiteness_definition": self.handler.whiteness_definition(),
             "score": float("-inf"),
             "score_global": float("-inf"),
             "score_best_seg": float("-inf"),
@@ -119,8 +167,12 @@ class K2NoiseLoader:
             "search_result": {},
             "segments": [],
             "n_segments": 0,
+            "error_stage": "",
+            "error_type": "",
+            "error_msg": "",
         }
 
+        fetched: Dict[str, Any]
         try:
             fetched = self.handler.fetch_best(
                 query=query,
@@ -128,35 +180,76 @@ class K2NoiseLoader:
                 exptime=use_exptime,
                 cache_only=use_cache_only,
             )
-            if str(fetched.get("status", "ok")).lower() != "ok":
-                row = dict(base)
-                row.update(
-                    {
-                        "status": str(fetched.get("status", "error")),
-                        "author": fetched.get("author", ""),
-                        "search_result": fetched.get("search_result", {}),
-                        "why_not_usable": str(fetched.get("status", "error")),
-                        "notes": f"fetch_status={fetched.get('status', 'error')}",
-                        "n_points": 0,
-                        "baseline_days": 0.0,
-                        "duty_cycle": 0.0,
-                        "mad": np.nan,
-                        "robust_sigma": np.nan,
-                        "outlier_rate_6sigma": np.nan,
-                        "outlier_rate_global": np.nan,
-                        "step_score": np.nan,
-                        "whiteness_score": np.nan,
-                    }
-                )
-                return row
+        except K2PipelineStageError as e:
+            return self._error_row(
+                base=base,
+                stage=e.stage,
+                exc=e,
+                author_selected=e.author_selected,
+                campaign_selected=e.campaign_selected,
+            )
+        except Exception as e:
+            return self._error_row(base=base, stage="search", exc=e)
+
+        if str(fetched.get("status", "ok")).lower() != "ok":
+            fetch_status = str(fetched.get("status", "error"))
+            row = dict(base)
+            row.update(
+                {
+                    "status": fetch_status,
+                    "author": str(fetched.get("author", "")),
+                    "author_selected": str(fetched.get("author_selected", fetched.get("author", ""))),
+                    "campaign_selected": str(fetched.get("campaign_selected", "")),
+                    "whiteness_definition": self.handler.whiteness_definition(),
+                    "search_result": fetched.get("search_result", {}),
+                    "why_not_usable": fetch_status,
+                    "notes": f"fetch_status={fetch_status}",
+                    "n_points": 0,
+                    "baseline_days": 0.0,
+                    "duty_cycle": 0.0,
+                    "mad": np.nan,
+                    "robust_sigma": np.nan,
+                    "outlier_rate_6sigma": np.nan,
+                    "outlier_rate_global": np.nan,
+                    "step_score": np.nan,
+                    "whiteness_score": np.nan,
+                }
+            )
+            return row
+
+        author_selected = str(fetched.get("author_selected", fetched.get("author", "")))
+        campaign_selected = str(fetched.get("campaign_selected", ""))
+
+        try:
             cleaned = self.handler.clean(fetched["lc"], flatten=use_flatten)
+        except Exception as e:
+            return self._error_row(
+                base=base,
+                stage="clean",
+                exc=e,
+                author_selected=author_selected,
+                campaign_selected=campaign_selected,
+                search_result=fetched.get("search_result", {}),
+            )
+
+        try:
             metric_obj = self.handler.metrics(
                 cleaned["time"],
                 cleaned["flux"],
                 notes=cleaned["notes"],
                 per_segment=use_per_segment,
             )
+        except Exception as e:
+            return self._error_row(
+                base=base,
+                stage="metrics",
+                exc=e,
+                author_selected=author_selected,
+                campaign_selected=campaign_selected,
+                search_result=fetched.get("search_result", {}),
+            )
 
+        try:
             if use_per_segment:
                 global_m = metric_obj["global"]
                 seg_metrics = metric_obj["segments"]
@@ -189,7 +282,10 @@ class K2NoiseLoader:
 
             row = dict(base)
             row.update(self._metrics_to_dict(global_m))
-            row["author"] = fetched.get("author", "")
+            row["author"] = author_selected
+            row["author_selected"] = author_selected
+            row["campaign_selected"] = campaign_selected
+            row["whiteness_definition"] = self.handler.whiteness_definition()
             row["search_result"] = fetched.get("search_result", {})
             row["score"] = score_global
             row["score_global"] = score_global
@@ -204,25 +300,15 @@ class K2NoiseLoader:
             row["n_segments"] = len(seg_metrics)
             row["segments"] = [self._metrics_to_dict(ms) for ms in seg_metrics]
             return row
-
         except Exception as e:
-            row = dict(base)
-            row.update(
-                {
-                    "status": "error",
-                    "notes": f"failed={type(e).__name__}",
-                    "n_points": 0,
-                    "baseline_days": 0.0,
-                    "duty_cycle": 0.0,
-                    "mad": np.nan,
-                    "robust_sigma": np.nan,
-                    "outlier_rate_6sigma": np.nan,
-                    "outlier_rate_global": np.nan,
-                    "step_score": np.nan,
-                    "whiteness_score": np.nan,
-                }
+            return self._error_row(
+                base=base,
+                stage="metrics",
+                exc=e,
+                author_selected=author_selected,
+                campaign_selected=campaign_selected,
+                search_result=fetched.get("search_result", {}),
             )
-            return row
 
     def run_from_csv(
         self,
