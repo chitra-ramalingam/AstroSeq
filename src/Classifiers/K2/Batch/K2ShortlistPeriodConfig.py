@@ -7,21 +7,33 @@ from typing import Optional, Tuple
 
 @dataclass(frozen=True)
 class K2ShortlistPeriodConfig:
+    RAW_EPIC_LIST_CSV: str = r"plots\k2_batch\batch_results_retriaged.csv"
+    RAW_EPIC_QUERY_COL: str = "query"
     SHORTLIST_CSV: str = r"plots\k2_batch\shortlist_top_shape_for_period.csv"
     EPICS_DIR: str = r"plots\k2_batch\epics"
     OUT_DIR: str = r"plots\k2_batch"
-    OUT_SUMMARY_CSV: str = r"plots\k2_batch\period_shortlist_summary.csv"
-    OUT_SUMMARY_UNIQUE_EPICP_CSV: str = r"plots\k2_batch\period_shortlist_summary_unique_epicP.csv"
-    OUT_SUMMARY_VALIDATED_ONLY_CSV: str = r"plots\k2_batch\period_shortlist_summary_validated_only.csv"
-    OUT_BEST_CSV: str = r"plots\k2_batch\period_shortlist_best.csv"
-    OUT_QUARANTINE_CSV: str = r"plots\k2_batch\period_shortlist_quarantine.csv"
-    OUT_DIAGNOSTICS_CSV: str = r"plots\k2_batch\period_shortlist_diagnostics.csv"
-    OUT_PERIOD_HIST_PNG: str = r"plots\k2_batch\period_hist_summary_vs_best.png"
-    OUT_PERIOD_HIST_COUNTS_CSV: str = r"plots\k2_batch\period_hist_summary_vs_best_counts.csv"
+    OUT_SUMMARY_CSV: str = r"period_shortlist_summary.csv"
+    OUT_SUMMARY_UNIQUE_EPICP_CSV: str = r"period_shortlist_summary_unique_epicP.csv"
+    OUT_SUMMARY_VALIDATED_ONLY_CSV: str = r"period_shortlist_summary_validated_only.csv"
+    OUT_BEST_CSV: str = r"period_shortlist_best.csv"
+    OUT_QUARANTINE_CSV: str = r"period_shortlist_quarantine.csv"
+    OUT_DIAGNOSTICS_CSV: str = r"period_shortlist_diagnostics.csv"
+    OUT_EPIC_FUNNEL_REASONS_CSV: str = r"epic_funnel_reasons.csv"
+    OUT_PERIOD_HIST_PNG: str = r"period_hist_summary_vs_best.png"
+    OUT_PERIOD_HIST_COUNTS_CSV: str = r"period_hist_summary_vs_best_counts.csv"
+    RUN_ID: Optional[str] = None
+    USE_RUN_SUBDIR: bool = True
 
     MAX_TARGETS: Optional[int] = None
     START_INDEX: int = 0
     END_INDEX: Optional[int] = None
+    PERIOD_STAGE_MODE: Optional[str] = None
+    PERIOD_STAGE_K: Optional[int] = 200
+    PERIOD_STAGE_N: Optional[int] = 5000
+    PERIOD_STAGE_SELECTION_MODE: str = "randomN"
+    PERIOD_STAGE_MAX_EPICS: Optional[int] = None
+    PERIOD_STAGE_RANDOM_SAMPLE_SIZE: Optional[int] = None
+    PERIOD_STAGE_RANDOM_SEED: int = 42
 
     PERIOD_TOL_PHASE: float = 0.03
     SOFT_SNR_T: float = 3.0
@@ -33,7 +45,10 @@ class K2ShortlistPeriodConfig:
     PERIOD_BIN_EDGES_DAYS: Tuple[float, ...] = (1.0, 5.0, 10.0, 15.0, 20.0)
     BEST_SELECTION_BIN_MODE: str = "match_summary_distribution"
     NULL_P_RATE_MAX: float = 0.001
-    NULL_P_RATE_EXEMPT_SOURCE_REASONS: Tuple[str, ...] = ("no_cluster_periods",)
+    NULL_P_RATE_EXEMPT_SOURCE_REASONS: Tuple[str, ...] = (
+        "no_cluster_periods",
+        "events_filtered_to_zero",
+    )
     MIN_CLUSTER_COUNT: int = 3
     ENABLE_VALIDATION: bool = True
     CACHE_ONLY_FIRST: bool = True
@@ -44,6 +59,10 @@ class K2ShortlistPeriodConfig:
     @property
     def shortlist_csv_path(self) -> Path:
         return Path(self.SHORTLIST_CSV)
+
+    @property
+    def raw_epic_list_csv_path(self) -> Path:
+        return Path(self.RAW_EPIC_LIST_CSV)
 
     @property
     def epics_dir_path(self) -> Path:
@@ -76,6 +95,10 @@ class K2ShortlistPeriodConfig:
     @property
     def out_diagnostics_csv_path(self) -> Path:
         return Path(self.OUT_DIAGNOSTICS_CSV)
+
+    @property
+    def out_epic_funnel_reasons_csv_path(self) -> Path:
+        return Path(self.OUT_EPIC_FUNNEL_REASONS_CSV)
 
     @property
     def out_period_hist_png_path(self) -> Path:

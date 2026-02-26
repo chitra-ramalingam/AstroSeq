@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -55,6 +57,48 @@ class K2ShortlistPeriodRunner:
     def __init__(self, config: Optional[K2ShortlistPeriodConfig] = None) -> None:
         self.config = config if config is not None else K2ShortlistPeriodConfig()
         self._period_file_re = re.compile(r"^period_([0-9]+(?:\.[0-9]+)?)_(hits|misses|uncovered)\.csv$", flags=re.IGNORECASE)
+
+    @staticmethod
+    def _sanitize_run_id(value: str) -> str:
+        text = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value).strip())
+        return text.strip("._-") or "run"
+
+    def _resolve_run_output_paths(self) -> Dict[str, Path]:
+        cfg = self.config
+        base_out_dir = cfg.out_dir_path
+        use_run_subdir = bool(getattr(cfg, "USE_RUN_SUBDIR", True))
+        run_id_cfg = getattr(cfg, "RUN_ID", None)
+        run_id = self._sanitize_run_id(str(run_id_cfg)) if (run_id_cfg is not None and str(run_id_cfg).strip() != "") else datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+        run_dir = base_out_dir
+        if use_run_subdir:
+            candidate = base_out_dir / run_id
+            if candidate.exists():
+                i = 1
+                while True:
+                    candidate_i = base_out_dir / f"{run_id}_{i:02d}"
+                    if not candidate_i.exists():
+                        candidate = candidate_i
+                        break
+                    i += 1
+            run_dir = candidate
+
+        def _name_only(path: Path) -> str:
+            return Path(path).name
+
+        return {
+            "run_id": Path(run_dir).name if use_run_subdir else run_id,
+            "run_dir": run_dir,
+            "out_summary_csv": run_dir / _name_only(cfg.out_summary_csv_path),
+            "out_summary_unique_epicp_csv": run_dir / _name_only(cfg.out_summary_unique_epicp_csv_path),
+            "out_summary_validated_only_csv": run_dir / _name_only(cfg.out_summary_validated_only_csv_path),
+            "out_best_csv": run_dir / _name_only(cfg.out_best_csv_path),
+            "out_quarantine_csv": run_dir / _name_only(cfg.out_quarantine_csv_path),
+            "out_diagnostics_csv": run_dir / _name_only(cfg.out_diagnostics_csv_path),
+            "out_epic_funnel_reasons_csv": run_dir / _name_only(cfg.out_epic_funnel_reasons_csv_path),
+            "out_period_hist_png": run_dir / _name_only(cfg.out_period_hist_png_path),
+            "out_period_hist_counts_csv": run_dir / _name_only(cfg.out_period_hist_counts_csv_path),
+        }
 
     @staticmethod
     def _extract_epic(query: str) -> Optional[str]:
@@ -507,14 +551,16 @@ class K2ShortlistPeriodRunner:
     def _period_bin_edges(self) -> List[float]:
         cfg = self.config
         configured_edges = list(getattr(cfg, "PERIOD_BIN_EDGES_DAYS", (1.0, 5.0, 10.0, 15.0, 20.0)))
-        edges = sorted({float(x) for x in configured_edges if np.isfinite(float(x)) and float(x) > 0})
+        edges = sorted({float(x) for x in configured_edges if np.isfinite(float(x)) and float(x) >= 0})
         max_period = float(self._effective_max_period_days())
         if len(edges) == 0:
-            edges = [1.0, 5.0, 10.0, 15.0, max_period]
+            edges = [0.0, 1.0, 5.0, 10.0, 15.0, max_period]
+        if edges[0] > 0.0:
+            edges = [0.0] + edges
         edges = [e for e in edges if e < max_period] + [max_period]
-        edges = sorted({float(x) for x in edges if np.isfinite(float(x)) and float(x) > 0})
+        edges = sorted({float(x) for x in edges if np.isfinite(float(x)) and float(x) >= 0})
         if len(edges) < 2:
-            low = max(1e-6, max_period - 1.0)
+            low = 0.0 if max_period > 0 else max(1e-6, max_period - 1.0)
             edges = [low, max_period]
         return edges
 
@@ -551,6 +597,556 @@ class K2ShortlistPeriodRunner:
             "period_validation_pipeline": "cluster_only_validation_error",
         }
         return reverse_mapping.get(key, "")
+
+    @staticmethod
+    def _canonical_epic_id(value: Any) -> str:
+        if pd.isna(value):
+            return ""
+        text = str(value).strip()
+        if text == "" or text.lower() == "nan":
+            return ""
+        m = re.search(r"\d+", text)
+        return m.group(0) if m is not None else text
+
+    def _load_raw_epic_table(self, shortlist_df: pd.DataFrame) -> pd.DataFrame:
+        cfg = self.config
+        raw_csv = cfg.raw_epic_list_csv_path
+        query_col_cfg = str(getattr(cfg, "RAW_EPIC_QUERY_COL", "query"))
+
+        if raw_csv.exists():
+            raw = pd.read_csv(raw_csv)
+            source = str(raw_csv)
+        else:
+            raw = shortlist_df.copy()
+            source = f"fallback:{cfg.shortlist_csv_path}"
+            print(
+                f"[K2ShortlistPeriodRunner] raw EPIC list not found at {raw_csv}; "
+                f"falling back to shortlist."
+            )
+
+        query_col = query_col_cfg if query_col_cfg in raw.columns else ("query" if "query" in raw.columns else "")
+        epic_col = ""
+        for c in ["epic_id", "epic", "EPIC ID"]:
+            if c in raw.columns:
+                epic_col = c
+                break
+
+        out = pd.DataFrame(index=raw.index)
+        if epic_col != "":
+            out["epic_id"] = raw[epic_col].map(self._canonical_epic_id)
+        elif query_col != "":
+            out["epic_id"] = raw[query_col].map(self._extract_epic).fillna("").astype(str)
+        else:
+            out["epic_id"] = ""
+
+        if query_col != "":
+            out["query"] = raw[query_col].fillna("").astype(str)
+        else:
+            out["query"] = out["epic_id"].map(lambda x: f"EPIC {x}" if x != "" else "")
+
+        for c in [
+            "triage_status",
+            "triage_why_not_usable",
+            "triage_usable",
+            "triage_score_global",
+            "triage_n_points",
+            "triage_whiteness_definition",
+            "n_events",
+            "n_periods_proposed",
+            "n_periods_validated",
+            "best_shape_score",
+            "best_depth_snr",
+            "error_stage",
+            "error_type",
+            "error_msg",
+            "campaign_selected",
+            "epic_dir",
+        ]:
+            out[c] = raw[c] if c in raw.columns else np.nan
+
+        out["epic_id"] = out["epic_id"].fillna("").astype(str).str.strip()
+        out = out.loc[out["epic_id"] != ""].copy()
+        out = out.drop_duplicates(subset=["epic_id"], keep="first").reset_index(drop=True)
+
+        print(
+            f"[K2ShortlistPeriodRunner] raw_epic_source={source} "
+            f"n_total_epics={len(out)}"
+        )
+        return out
+
+    def _period_stage_selection_mode(self) -> str:
+        cfg = self.config
+        raw_mode = getattr(cfg, "PERIOD_STAGE_SELECTION_MODE", "topk")
+        mode = str(raw_mode).strip().lower()
+        aliases = {
+            "topk": "topk",
+            "top_k": "topk",
+            "random": "randomN",
+            "randomn": "randomN",
+            "all": "all",
+        }
+        resolved = aliases.get(mode, "")
+        if resolved == "":
+            raise ValueError(
+                f"Unsupported PERIOD_STAGE_SELECTION_MODE={raw_mode!r}; "
+                "expected one of {'topk','randomN','all'}."
+            )
+        return resolved
+
+    def _rank_raw_epics_for_period_stage(self, raw_epics_df: pd.DataFrame) -> pd.DataFrame:
+        work = raw_epics_df.copy()
+        for c in ["query", "epic_id", "triage_status"]:
+            if c not in work.columns:
+                work[c] = ""
+        for c in ["n_events", "best_shape_score", "best_depth_snr"]:
+            if c not in work.columns:
+                work[c] = np.nan
+
+        work["query"] = work["query"].fillna("").astype(str)
+        work["epic_id"] = work["epic_id"].fillna("").astype(str).str.strip()
+        work["triage_status"] = work["triage_status"].fillna("").astype(str).str.strip().str.lower()
+        work["n_events"] = pd.to_numeric(work["n_events"], errors="coerce")
+        work["best_shape_score"] = pd.to_numeric(work["best_shape_score"], errors="coerce")
+        work["best_depth_snr"] = pd.to_numeric(work["best_depth_snr"], errors="coerce")
+
+        ranked = (
+            work.loc[(work["triage_status"] == "ok") & (work["n_events"] > 0) & (work["query"] != "")]
+            .sort_values(["best_shape_score", "best_depth_snr"], ascending=[False, False], kind="mergesort")
+            .drop_duplicates(subset=["epic_id"], keep="first")
+        )
+        return ranked.reset_index(drop=True)
+
+    def _select_period_stage_queries(
+        self,
+        raw_epics_df: pd.DataFrame,
+        shortlist_df: pd.DataFrame,
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        cfg = self.config
+        mode = self._period_stage_selection_mode()
+        selected_df = pd.DataFrame(columns=["query", "epic_id"])
+        period_stage_k = getattr(cfg, "PERIOD_STAGE_K", None)
+        period_stage_n = getattr(cfg, "PERIOD_STAGE_N", None)
+        seed = int(getattr(cfg, "PERIOD_STAGE_RANDOM_SEED", 42))
+        selection_meta: Dict[str, Any] = {
+            "period_stage_selection_mode": mode,
+            "period_stage_k": period_stage_k,
+            "period_stage_n": period_stage_n,
+            "period_stage_random_seed": seed,
+            "ranking_basis": "best_shape_score desc, best_depth_snr desc",
+            "n_ranked_candidates": 0,
+            "n_population_for_gate": 0,
+            "n_selected_for_period_stage": 0,
+            "n_enter_period_stage_pre_slice": 0,
+            "n_excluded_by_topk_gate": 0,
+            "n_excluded_by_gate": 0,
+        }
+
+        if mode == "all":
+            selected_df = raw_epics_df.copy()
+            selected_df["query"] = selected_df.get("query", "").fillna("").astype(str)
+            selected_df["epic_id"] = selected_df.get("epic_id", "").fillna("").astype(str).str.strip()
+            selected_df = selected_df.loc[selected_df["query"] != ""].drop_duplicates(subset=["epic_id"], keep="first")
+            selection_meta["n_population_for_gate"] = int(len(selected_df))
+        elif mode == "randomN":
+            if period_stage_n is None:
+                raise ValueError("PERIOD_STAGE_SELECTION_MODE='randomN' requires PERIOD_STAGE_N to be set.")
+            base = raw_epics_df.copy()
+            base["query"] = base.get("query", "").fillna("").astype(str)
+            base["epic_id"] = base.get("epic_id", "").fillna("").astype(str).str.strip()
+            base = base.loc[base["query"] != ""].drop_duplicates(subset=["epic_id"], keep="first").reset_index(drop=True)
+            selection_meta["n_population_for_gate"] = int(len(base))
+            sample_n = max(0, int(period_stage_n))
+            sample_n = min(sample_n, len(base))
+            if sample_n >= len(base):
+                selected_df = base
+            else:
+                rng = np.random.default_rng(seed)
+                pick = np.sort(rng.choice(len(base), size=sample_n, replace=False))
+                selected_df = base.iloc[pick].copy()
+        else:
+            if period_stage_k is None:
+                raise ValueError("PERIOD_STAGE_SELECTION_MODE='topk' requires PERIOD_STAGE_K to be set.")
+            ranked = self._rank_raw_epics_for_period_stage(raw_epics_df=raw_epics_df)
+            selection_meta["n_ranked_candidates"] = int(len(ranked))
+            selection_meta["n_population_for_gate"] = int(len(ranked))
+            topk = max(0, int(period_stage_k))
+            if topk <= 0:
+                selected_df = ranked.iloc[0:0].copy()
+            else:
+                selected_df = ranked.head(topk).copy()
+            selection_meta["n_excluded_by_topk_gate"] = max(0, int(len(ranked) - len(selected_df)))
+
+        selected_df = selected_df.copy()
+        selected_df["query"] = selected_df.get("query", "").fillna("").astype(str)
+        selected_df["epic_id"] = selected_df.get("epic_id", "").fillna("").astype(str).str.strip()
+        selected_df = selected_df.loc[selected_df["query"] != ""].drop_duplicates(subset=["epic_id"], keep="first").reset_index(drop=True)
+        selection_meta["n_selected_for_period_stage"] = int(len(selected_df))
+        selection_meta["n_enter_period_stage_pre_slice"] = int(len(selected_df))
+        selection_meta["n_excluded_by_gate"] = int(max(0, int(selection_meta.get("n_population_for_gate", 0)) - len(selected_df)))
+
+        queries = selected_df["query"].tolist()
+        start = max(0, int(cfg.START_INDEX))
+        end = len(queries) - 1 if cfg.END_INDEX is None else min(int(cfg.END_INDEX), len(queries) - 1)
+        selected = queries[start : end + 1] if end >= start else []
+        if cfg.MAX_TARGETS is not None:
+            selected = selected[: max(0, int(cfg.MAX_TARGETS))]
+        selection_meta["n_enter_period_stage"] = int(len(selected))
+        selection_meta["n_excluded_by_slice"] = int(max(0, len(queries) - len(selected)))
+        if mode != "topk":
+            selection_meta["n_excluded_by_topk_gate"] = 0
+        return selected, selection_meta
+
+    def _build_epic_funnel_and_reasons(
+        self,
+        raw_epics_df: pd.DataFrame,
+        selected_queries: Sequence[str],
+        selection_meta: Dict[str, Any],
+        df_summary_raw: pd.DataFrame,
+        df_summary_valid: pd.DataFrame,
+        df_summary_unique: pd.DataFrame,
+        df_summary_validated_only: pd.DataFrame,
+        best_df: pd.DataFrame,
+        quarantine_df: pd.DataFrame,
+    ) -> Tuple[Dict[str, int], pd.DataFrame]:
+        selected_epics = {
+            str(self._extract_epic(q) or "").strip()
+            for q in selected_queries
+            if str(self._extract_epic(q) or "").strip() != ""
+        }
+
+        reasons = raw_epics_df.copy()
+        reasons["epic_id"] = reasons["epic_id"].fillna("").astype(str).str.strip()
+        reasons["query"] = reasons.get("query", "").fillna("").astype(str)
+        for c in ["triage_status", "triage_why_not_usable", "n_events", "n_periods_proposed", "n_periods_validated"]:
+            if c not in reasons.columns:
+                reasons[c] = np.nan
+        reasons["selected_for_period_stage"] = reasons["epic_id"].isin(selected_epics)
+        reasons["terminal_reason"] = "other"
+        reasons["source_reason"] = ""
+        reasons["no_events_breakdown"] = ""
+        reasons["load_failed_exception_type"] = ""
+        reasons["load_failed_exception_message"] = ""
+        reasons["load_failed_campaign"] = ""
+        reasons["load_failed_source"] = ""
+        reasons["no_events_n_points_after_clean"] = np.nan
+        reasons["no_events_baseline_days"] = np.nan
+        reasons["no_events_thresholds_used"] = ""
+        empty_s = pd.Series([""] * len(reasons), index=reasons.index, dtype=str)
+
+        status = reasons.get("triage_status", "").fillna("").astype(str).str.strip().str.lower()
+        why_not = reasons.get("triage_why_not_usable", "").fillna("").astype(str).str.strip().str.lower()
+        n_events = pd.to_numeric(reasons.get("n_events", np.nan), errors="coerce")
+        error_type = reasons.get("error_type", empty_s).fillna("").astype(str).str.strip()
+        error_msg = reasons.get("error_msg", empty_s).fillna("").astype(str).str.strip()
+        error_stage = reasons.get("error_stage", empty_s).fillna("").astype(str).str.strip()
+        campaign = reasons.get("campaign_selected", empty_s).fillna("").astype(str).str.strip()
+        triage_n_points = pd.to_numeric(reasons.get("triage_n_points", pd.Series([np.nan] * len(reasons), index=reasons.index)), errors="coerce")
+        whiteness_def = reasons.get("triage_whiteness_definition", empty_s).fillna("").astype(str).str.strip()
+
+        mask_load_failed = status.eq("error") | why_not.str.contains("triage_status=error|no_lightcurve|load_failed", regex=True)
+        mask_insufficient_points = why_not.str.contains("all_flux_nan|n_points<|insufficient_points|baseline_days<", regex=True)
+        mask_no_events = n_events.fillna(0.0) <= 0.0
+
+        reasons.loc[mask_load_failed, "terminal_reason"] = "no_lightcurve/load_failed"
+        reasons.loc[mask_load_failed, "source_reason"] = why_not.loc[mask_load_failed].replace("", "triage_status=error")
+        reasons.loc[mask_load_failed, "load_failed_exception_type"] = error_type.loc[mask_load_failed].replace("", "UnknownError")
+        reasons.loc[mask_load_failed, "load_failed_exception_message"] = error_msg.loc[mask_load_failed].replace("", "triage_status=error")
+        reasons.loc[mask_load_failed, "load_failed_campaign"] = campaign.loc[mask_load_failed].replace("", "unknown_campaign")
+        reasons.loc[mask_load_failed, "load_failed_source"] = error_stage.loc[mask_load_failed].replace("", "batch_triage")
+
+        mask_apply = (~mask_load_failed) & mask_insufficient_points
+        reasons.loc[mask_apply, "terminal_reason"] = "all_flux_nan/insufficient_points"
+        reasons.loc[mask_apply, "source_reason"] = why_not.loc[mask_apply].replace("", "insufficient_points")
+
+        mask_apply = (~mask_load_failed) & (~mask_insufficient_points) & mask_no_events
+        reasons.loc[mask_apply, "terminal_reason"] = "no_events"
+        reasons.loc[mask_apply, "source_reason"] = "n_events<=0"
+        no_events_sub = pd.Series(["other_no_events"] * len(reasons), index=reasons.index, dtype=str)
+        no_events_sub.loc[
+            why_not.str.contains("n_points<|baseline_days<|insufficient", regex=True)
+        ] = "insufficient_baseline_or_points"
+        no_events_sub.loc[
+            why_not.str.contains("outlier_rate|robust_sigma|quality|noisy|whiten", regex=True)
+        ] = "bad_quality_flags"
+        no_events_sub.loc[(status == "ok") & (why_not == "")] = "too_strict_thresholds_or_no_signal"
+        reasons.loc[mask_apply, "no_events_breakdown"] = no_events_sub.loc[mask_apply]
+        reasons.loc[mask_apply, "no_events_n_points_after_clean"] = triage_n_points.loc[mask_apply]
+        no_events_thresholds = why_not.copy()
+        no_events_thresholds = no_events_thresholds.where(
+            no_events_thresholds != "",
+            whiteness_def.replace("", "unknown_thresholds"),
+        )
+        reasons.loc[mask_apply, "no_events_thresholds_used"] = no_events_thresholds.loc[mask_apply]
+        baseline_extracted = why_not.str.extract(r"baseline_days<([0-9]+(?:\.[0-9]+)?)", expand=False)
+        reasons.loc[mask_apply, "no_events_baseline_days"] = pd.to_numeric(
+            baseline_extracted.loc[mask_apply], errors="coerce"
+        )
+
+        summary_work = df_summary_raw.copy()
+        summary_work["epic"] = summary_work.get("epic", "").fillna("").astype(str).str.strip()
+        summary_work["reason"] = summary_work.get("reason", "").fillna("").astype(str).str.strip().str.lower()
+        n_after_by_epic = (
+            pd.to_numeric(summary_work.get("n_events_after_filters", np.nan), errors="coerce")
+            .groupby(summary_work["epic"])
+            .max()
+            .to_dict()
+            if len(summary_work) > 0
+            else {}
+        )
+        reason_set_by_epic: Dict[str, set[str]] = {}
+        if len(summary_work) > 0:
+            for epic, grp in summary_work.groupby("epic"):
+                reason_set_by_epic[str(epic)] = set(grp["reason"].fillna("").astype(str).tolist())
+
+        q = quarantine_df.copy()
+        if len(q) > 0:
+            q["epic_id"] = q.get("epic_id", "").fillna("").astype(str).str.strip()
+            q["reason"] = q.get("reason", "").fillna("").astype(str).str.strip().str.lower()
+            q["source_reason"] = q.get("source_reason", "").fillna("").astype(str).str.strip().str.lower()
+            q = q.sort_values(["epic_id"], kind="mergesort")
+            q_first = q.drop_duplicates(subset=["epic_id"], keep="first")
+            quarantine_by_epic = {
+                str(r["epic_id"]): {
+                    "reason": str(r.get("reason", "")),
+                    "source_reason": str(r.get("source_reason", "")),
+                    "failure_category": str(r.get("failure_category", "")),
+                    "failure_detail": str(r.get("failure_detail", "")),
+                }
+                for _, r in q_first.iterrows()
+            }
+        else:
+            quarantine_by_epic = {}
+
+        summary_valid_work = df_summary_valid.copy()
+        summary_valid_work["epic"] = summary_valid_work.get("epic", "").fillna("").astype(str).str.strip()
+        summary_valid_work["reason"] = summary_valid_work.get("reason", "").fillna("").astype(str).str.strip().str.lower()
+        p_valid = pd.to_numeric(summary_valid_work.get("P", np.nan), errors="coerce")
+        candidate_epics = set(summary_valid_work.loc[p_valid.notna(), "epic"].astype(str).tolist())
+        validated_epics = set(
+            df_summary_validated_only.get("epic", pd.Series(dtype=str)).fillna("").astype(str).str.strip().tolist()
+        )
+        best_epics = set(best_df.get("epic", pd.Series(dtype=str)).fillna("").astype(str).str.strip().tolist())
+        quarantine_epics = set(q.get("epic_id", pd.Series(dtype=str)).fillna("").astype(str).str.strip().tolist()) if len(q) > 0 else set()
+        validation_fail_reasons = {"cluster_only_no_valid_period", "cluster_only_validation_error", "cluster_only_cache_miss"}
+
+        reason_index = {str(ep): idx for idx, ep in zip(reasons.index, reasons["epic_id"].astype(str))}
+        if len(selected_epics - set(reason_index.keys())) > 0:
+            missing_rows = pd.DataFrame(
+                {
+                    "epic_id": sorted(selected_epics - set(reason_index.keys())),
+                    "query": [f"EPIC {x}" for x in sorted(selected_epics - set(reason_index.keys()))],
+                    "triage_status": "",
+                    "triage_why_not_usable": "",
+                    "n_events": np.nan,
+                    "n_periods_proposed": np.nan,
+                    "n_periods_validated": np.nan,
+                    "selected_for_period_stage": True,
+                    "terminal_reason": "other",
+                    "source_reason": "selected_epic_missing_in_raw_epic_list",
+                }
+            )
+            reasons = pd.concat([reasons, missing_rows], ignore_index=True)
+            reason_index = {str(ep): idx for idx, ep in zip(reasons.index, reasons["epic_id"].astype(str))}
+
+        for epic in selected_epics:
+            idx = reason_index.get(epic)
+            if idx is None:
+                continue
+            q_info = quarantine_by_epic.get(epic)
+            if q_info is not None:
+                q_reason = str(q_info.get("reason", "")).strip().lower()
+                src_reason = str(q_info.get("source_reason", "")).strip().lower()
+                if src_reason == "events_filtered_to_zero":
+                    reasons.at[idx, "terminal_reason"] = "too_few_events_after_filters"
+                    reasons.at[idx, "source_reason"] = str(q_info.get("failure_detail", "") or "events_filtered_to_zero")
+                elif src_reason == "no_cluster_periods":
+                    reasons.at[idx, "terminal_reason"] = "no_cluster_periods"
+                    reasons.at[idx, "source_reason"] = str(
+                        q_info.get("failure_category", "") or q_info.get("failure_detail", "") or "no_cluster_periods"
+                    )
+                elif q_reason == "p_above_max_period":
+                    reasons.at[idx, "terminal_reason"] = "period_over_cap"
+                    reasons.at[idx, "source_reason"] = "P_above_max_period"
+                elif src_reason in validation_fail_reasons:
+                    reasons.at[idx, "terminal_reason"] = "fails_validation"
+                    reasons.at[idx, "source_reason"] = src_reason
+                else:
+                    reasons.at[idx, "terminal_reason"] = "other"
+                    reasons.at[idx, "source_reason"] = f"quarantine:{src_reason or q_reason or 'unknown'}"
+                continue
+
+            epic_reasons = reason_set_by_epic.get(epic, set())
+            if epic in validated_epics:
+                reasons.at[idx, "terminal_reason"] = "other"
+                reasons.at[idx, "source_reason"] = "validated_period"
+            elif epic in candidate_epics:
+                if len(epic_reasons.intersection(validation_fail_reasons)) > 0:
+                    reasons.at[idx, "terminal_reason"] = "fails_validation"
+                    reasons.at[idx, "source_reason"] = "cluster_only_validation_error"
+                else:
+                    reasons.at[idx, "terminal_reason"] = "other"
+                    reasons.at[idx, "source_reason"] = "candidate_periods_generated"
+            else:
+                n_after = self._as_float(n_after_by_epic.get(epic, np.nan))
+                if np.isfinite(n_after) and n_after < 2:
+                    reasons.at[idx, "terminal_reason"] = "too_few_events_after_filters"
+                    reasons.at[idx, "source_reason"] = f"n_events_after_filters={int(n_after)}"
+                elif "no_cluster_periods" in epic_reasons:
+                    reasons.at[idx, "terminal_reason"] = "no_cluster_periods"
+                    reasons.at[idx, "source_reason"] = "no_cluster_periods"
+                else:
+                    reasons.at[idx, "terminal_reason"] = "other"
+                    reasons.at[idx, "source_reason"] = "selected_but_no_period_rows"
+
+        not_selected_mask = ~reasons["selected_for_period_stage"].astype(bool)
+        other_mask = reasons["terminal_reason"].eq("other")
+        mode = str(selection_meta.get("period_stage_selection_mode", self._period_stage_selection_mode()))
+        topk = selection_meta.get("period_stage_k", getattr(self.config, "PERIOD_STAGE_K", None))
+        if mode == "topk":
+            gate_label = f"not_in_period_stage_topk_{int(topk)}_by_best_shape_score_then_best_depth_snr"
+        elif mode == "randomN":
+            gate_label = f"not_in_period_stage_random_sample_n{int(selection_meta.get('n_enter_period_stage_pre_slice', 0))}"
+        elif mode == "all":
+            gate_label = "not_in_period_stage_all_mode_slice_exclusion"
+        else:
+            gate_label = f"not_in_period_stage_mode_{mode}"
+        reasons.loc[not_selected_mask & other_mask, "source_reason"] = gate_label
+        reasons["source_reason"] = reasons["source_reason"].fillna("").astype(str)
+
+        n_total_epics = int(len(reasons))
+        if "triage_status" in reasons.columns and reasons["triage_status"].notna().any():
+            n_with_lightcurve_loaded = int((status != "error").sum())
+        else:
+            n_with_lightcurve_loaded = int((reasons["terminal_reason"] != "no_lightcurve/load_failed").sum())
+        n_with_events_detected = int((pd.to_numeric(reasons.get("n_events", np.nan), errors="coerce").fillna(0.0) > 0.0).sum())
+        n_with_candidate_periods_generated = int(len(candidate_epics))
+        n_with_validated_periods = int(len(validated_epics))
+        n_with_unique_epic_p = int(len(df_summary_unique))
+        n_best_unique_epics = int(len(best_epics))
+        n_quarantined_epics = int(len(quarantine_epics))
+        n_enter_period_stage = int(selection_meta.get("n_enter_period_stage", len(selected_epics)))
+        n_excluded_by_topk_gate = int(selection_meta.get("n_excluded_by_topk_gate", 0))
+        n_excluded_by_gate = int(selection_meta.get("n_excluded_by_gate", n_excluded_by_topk_gate))
+        n_validated_period = int(len(validated_epics))
+        no_events_breakdown_counts = (
+            reasons.loc[reasons["terminal_reason"] == "no_events", "no_events_breakdown"]
+            .fillna("other_no_events")
+            .astype(str)
+            .value_counts()
+            .to_dict()
+        )
+
+        funnel = {
+            "n_total_epics": n_total_epics,
+            "n_enter_period_stage": n_enter_period_stage,
+            "n_excluded_by_topk_gate": n_excluded_by_topk_gate,
+            "n_excluded_by_gate": n_excluded_by_gate,
+            "n_validated_period": n_validated_period,
+            "n_with_lightcurve_loaded": n_with_lightcurve_loaded,
+            "n_with_events_detected": n_with_events_detected,
+            "n_with_candidate_periods_generated": n_with_candidate_periods_generated,
+            "n_with_validated_periods": n_with_validated_periods,
+            "n_with_unique_epic_p": n_with_unique_epic_p,
+            "n_best_unique_epics": n_best_unique_epics,
+            "n_quarantined_epics": n_quarantined_epics,
+            "n_selected_for_period_stage": int(selection_meta.get("n_selected_for_period_stage", len(selected_epics))),
+            "best_count_rows": int(len(best_df)),
+            "best_unique_epics": int(best_df.get("epic", pd.Series(dtype=str)).fillna("").astype(str).str.strip().nunique()),
+            "summary_unique_epic_p": int(len(df_summary_unique)),
+            "validated_only_unique_epic_p": int(len(df_summary_validated_only)),
+            "period_stage_selection_mode": str(mode),
+            "period_stage_ranking_basis": str(selection_meta.get("ranking_basis", "best_shape_score desc, best_depth_snr desc")),
+            "no_events_breakdown_counts": "|".join([f"{k}:{int(v)}" for k, v in no_events_breakdown_counts.items()]),
+        }
+
+        reasons["stage_reached"] = "period_stage_other"
+        selected_mask = reasons["selected_for_period_stage"].astype(bool)
+        reasons.loc[~selected_mask, "stage_reached"] = "pre_period_gate"
+        reasons.loc[selected_mask, "stage_reached"] = "period_stage_entered"
+        reasons.loc[reasons["terminal_reason"] == "no_lightcurve/load_failed", "stage_reached"] = "lightcurve_load"
+        reasons.loc[reasons["terminal_reason"] == "all_flux_nan/insufficient_points", "stage_reached"] = "event_precheck"
+        reasons.loc[reasons["terminal_reason"] == "no_events", "stage_reached"] = "event_detection"
+        reasons.loc[reasons["terminal_reason"] == "too_few_events_after_filters", "stage_reached"] = "event_filtering"
+        reasons.loc[reasons["terminal_reason"] == "no_cluster_periods", "stage_reached"] = "period_inference"
+        reasons.loc[reasons["terminal_reason"] == "period_over_cap", "stage_reached"] = "period_cap_filter"
+        reasons.loc[reasons["terminal_reason"] == "fails_validation", "stage_reached"] = "period_validation"
+        reasons.loc[reasons["source_reason"] == "validated_period", "stage_reached"] = "validated_period"
+        reasons.loc[reasons["source_reason"] == "candidate_periods_generated", "stage_reached"] = "candidate_period_generation"
+
+        details_keys = [
+            "query",
+            "triage_status",
+            "triage_why_not_usable",
+            "n_events",
+            "n_periods_proposed",
+            "n_periods_validated",
+            "no_events_breakdown",
+            "load_failed_exception_type",
+            "load_failed_exception_message",
+            "load_failed_campaign",
+            "load_failed_source",
+            "no_events_n_points_after_clean",
+            "no_events_baseline_days",
+            "no_events_thresholds_used",
+        ]
+
+        def _to_details_json(row: pd.Series) -> str:
+            term = str(row.get("terminal_reason", "")).strip().lower()
+            payload: Dict[str, Any] = {
+                "selected_for_period_stage": bool(row.get("selected_for_period_stage", False)),
+                "period_stage_mode": str(mode),
+            }
+            force_null_keys: set[str] = set()
+            if term == "no_events":
+                force_null_keys = {
+                    "no_events_breakdown",
+                    "no_events_n_points_after_clean",
+                    "no_events_baseline_days",
+                    "no_events_thresholds_used",
+                }
+            elif term == "no_lightcurve/load_failed":
+                force_null_keys = {
+                    "load_failed_exception_type",
+                    "load_failed_exception_message",
+                    "load_failed_campaign",
+                    "load_failed_source",
+                }
+            for key in details_keys:
+                value = row.get(key, None)
+                if pd.isna(value):
+                    if key in force_null_keys:
+                        payload[key] = None
+                    continue
+                if isinstance(value, str):
+                    v = value.strip()
+                    if v == "":
+                        if key in force_null_keys:
+                            payload[key] = None
+                        continue
+                    payload[key] = v
+                    continue
+                if isinstance(value, (np.integer,)):
+                    payload[key] = int(value)
+                    continue
+                if isinstance(value, (np.floating, float)):
+                    fv = float(value)
+                    if np.isfinite(fv):
+                        payload[key] = fv
+                    continue
+                payload[key] = value
+            return json.dumps(payload, sort_keys=True)
+
+        reasons["details_json"] = reasons.apply(_to_details_json, axis=1)
+        reasons = reasons[
+            [
+                "epic_id",
+                "terminal_reason",
+                "source_reason",
+                "stage_reached",
+                "details_json",
+            ]
+        ].copy()
+        return funnel, reasons
 
     def _validate_period_rows(
         self,
@@ -603,6 +1199,47 @@ class K2ShortlistPeriodRunner:
             "rows_valid": int((~invalid_mask).sum()),
         }
         return valid, quarantine, diagnostics
+
+    def _assert_output_consistency(
+        self,
+        *,
+        out_summary_csv: Path,
+        out_best_csv: Path,
+        out_diagnostics_csv: Path,
+        expected_summary_unique_rows: int,
+        expected_best_rows: int,
+    ) -> None:
+        written_summary = self._read_csv(out_summary_csv)
+        written_best = self._read_csv(out_best_csv)
+        if int(len(written_summary)) != int(expected_summary_unique_rows):
+            raise RuntimeError(
+                "[K2ShortlistPeriodRunner] consistency check failed: "
+                f"rows_unique_epic_p expected={int(expected_summary_unique_rows)} "
+                f"written_summary_rows={int(len(written_summary))}"
+            )
+        if int(len(written_best)) != int(expected_best_rows):
+            raise RuntimeError(
+                "[K2ShortlistPeriodRunner] consistency check failed: "
+                f"rows_best expected={int(expected_best_rows)} "
+                f"written_best_rows={int(len(written_best))}"
+            )
+
+        diag_df = self._read_csv(out_diagnostics_csv)
+        if len(diag_df) == 0:
+            raise RuntimeError("[K2ShortlistPeriodRunner] consistency check failed: diagnostics CSV is empty")
+        row = diag_df.iloc[0]
+        diag_unique = int(pd.to_numeric(pd.Series([row.get("rows_unique_epic_p", np.nan)]), errors="coerce").fillna(-1).iloc[0])
+        diag_best = int(pd.to_numeric(pd.Series([row.get("rows_best", np.nan)]), errors="coerce").fillna(-1).iloc[0])
+        if diag_unique != int(expected_summary_unique_rows):
+            raise RuntimeError(
+                "[K2ShortlistPeriodRunner] consistency check failed: diagnostics rows_unique_epic_p "
+                f"expected={int(expected_summary_unique_rows)} diagnostics={diag_unique}"
+            )
+        if diag_best != int(expected_best_rows):
+            raise RuntimeError(
+                "[K2ShortlistPeriodRunner] consistency check failed: diagnostics rows_best "
+                f"expected={int(expected_best_rows)} diagnostics={diag_best}"
+            )
 
     def _enforce_null_p_rate_threshold(
         self,
@@ -859,7 +1496,7 @@ class K2ShortlistPeriodRunner:
     ) -> Dict[str, Any]:
         edges = np.asarray(self._period_bin_edges(), dtype=float)
         if edges.size < 2:
-            edges = np.asarray([1.0, float(self._effective_max_period_days())], dtype=float)
+            edges = np.asarray([0.0, float(self._effective_max_period_days())], dtype=float)
         labels = [f"({edges[i]:g}, {edges[i + 1]:g}]" for i in range(edges.size - 1)]
 
         p_summary = pd.to_numeric(summary_df.get("P", np.nan), errors="coerce").to_numpy(dtype=float)
@@ -869,6 +1506,13 @@ class K2ShortlistPeriodRunner:
 
         hist_summary, _ = np.histogram(p_summary, bins=edges)
         hist_best, _ = np.histogram(p_best, bins=edges)
+        accept_rate = np.divide(
+            hist_best.astype(float),
+            hist_summary.astype(float),
+            out=np.zeros_like(hist_best, dtype=float),
+            where=(hist_summary.astype(float) > 0),
+        )
+        low_acceptance_flag = accept_rate < 0.30
         counts_df = pd.DataFrame(
             {
                 "bin_left": edges[:-1],
@@ -876,6 +1520,8 @@ class K2ShortlistPeriodRunner:
                 "bin_label": labels,
                 "summary_count": hist_summary.astype(int),
                 "best_count": hist_best.astype(int),
+                "accept_rate": accept_rate.astype(float),
+                "low_acceptance_flag": low_acceptance_flag.astype(int),
             }
         )
         out_counts_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -888,14 +1534,14 @@ class K2ShortlistPeriodRunner:
             bins=edges,
             alpha=0.45,
             color="#4C78A8",
-            label=f"Summary (n={len(p_summary)})",
+            label=f"Summary unique (epic,P) (n={len(p_summary)})",
         )
         ax.hist(
             p_best,
             bins=edges,
             alpha=0.45,
             color="#F58518",
-            label=f"Best (n={len(p_best)})",
+            label=f"Best rows (n={len(p_best)})",
         )
         cap = float(self._effective_max_period_days())
         ax.axvline(cap, color="#B22222", linestyle="--", linewidth=1.2, label=f"cap P <= {cap:g} d")
@@ -912,6 +1558,8 @@ class K2ShortlistPeriodRunner:
             "hist_bin_edges": [float(x) for x in edges.tolist()],
             "summary_hist_total": int(hist_summary.sum()),
             "best_hist_total": int(hist_best.sum()),
+            "accept_rates_by_bin": {str(labels[i]): float(accept_rate[i]) for i in range(len(labels))},
+            "low_acceptance_bins": [str(labels[i]) for i in range(len(labels)) if bool(low_acceptance_flag[i])],
         }
 
     def _log_period_inference_failure(
@@ -957,47 +1605,36 @@ class K2ShortlistPeriodRunner:
         cfg = self.config
         shortlist_csv = cfg.shortlist_csv_path
         epics_dir = cfg.epics_dir_path
-        out_summary_csv = cfg.out_summary_csv_path
-        out_summary_unique_epicp_csv = cfg.out_summary_unique_epicp_csv_path
-        out_summary_validated_only_csv = cfg.out_summary_validated_only_csv_path
-        out_best_csv = cfg.out_best_csv_path
-        out_quarantine_csv = cfg.out_quarantine_csv_path
-        out_diagnostics_csv = cfg.out_diagnostics_csv_path
-        out_period_hist_png = cfg.out_period_hist_png_path
-        out_period_hist_counts_csv = cfg.out_period_hist_counts_csv_path
+        out_paths = self._resolve_run_output_paths()
+        run_id = str(out_paths["run_id"])
+        run_dir = Path(out_paths["run_dir"])
+        out_summary_csv = Path(out_paths["out_summary_csv"])
+        out_summary_unique_epicp_csv = Path(out_paths["out_summary_unique_epicp_csv"])
+        out_summary_validated_only_csv = Path(out_paths["out_summary_validated_only_csv"])
+        out_best_csv = Path(out_paths["out_best_csv"])
+        out_quarantine_csv = Path(out_paths["out_quarantine_csv"])
+        out_diagnostics_csv = Path(out_paths["out_diagnostics_csv"])
+        out_epic_funnel_reasons_csv = Path(out_paths["out_epic_funnel_reasons_csv"])
+        out_period_hist_png = Path(out_paths["out_period_hist_png"])
+        out_period_hist_counts_csv = Path(out_paths["out_period_hist_counts_csv"])
 
-        if not shortlist_csv.exists():
-            raise FileNotFoundError(f"Shortlist CSV not found: {shortlist_csv}")
+        selection_mode = self._period_stage_selection_mode()
         if not epics_dir.exists():
             raise FileNotFoundError(f"EPICS directory not found: {epics_dir}")
 
-        shortlist_df = pd.read_csv(shortlist_csv)
-        if "query" not in shortlist_df.columns:
-            raise ValueError(f"Column 'query' not found in {shortlist_csv}")
+        if shortlist_csv.exists():
+            shortlist_df = pd.read_csv(shortlist_csv)
+            if "query" not in shortlist_df.columns:
+                raise ValueError(f"Column 'query' not found in {shortlist_csv}")
+        else:
+            shortlist_df = pd.DataFrame({"query": pd.Series([], dtype=str)})
+        raw_epics_df = self._load_raw_epic_table(shortlist_df=shortlist_df)
+        selected, selection_meta = self._select_period_stage_queries(
+            raw_epics_df=raw_epics_df,
+            shortlist_df=shortlist_df,
+        )
 
-        queries = shortlist_df["query"].dropna().astype(str).tolist()
-        start = max(0, int(cfg.START_INDEX))
-        end = len(queries) - 1 if cfg.END_INDEX is None else min(int(cfg.END_INDEX), len(queries) - 1)
-        selected = queries[start : end + 1] if end >= start else []
-        if cfg.MAX_TARGETS is not None:
-            selected = selected[: max(0, int(cfg.MAX_TARGETS))]
-
-        if out_summary_csv.exists():
-            out_summary_csv.unlink()
-        if out_summary_unique_epicp_csv.exists():
-            out_summary_unique_epicp_csv.unlink()
-        if out_summary_validated_only_csv.exists():
-            out_summary_validated_only_csv.unlink()
-        if out_best_csv.exists():
-            out_best_csv.unlink()
-        if out_quarantine_csv.exists():
-            out_quarantine_csv.unlink()
-        if out_diagnostics_csv.exists():
-            out_diagnostics_csv.unlink()
-        if out_period_hist_png.exists():
-            out_period_hist_png.unlink()
-        if out_period_hist_counts_csv.exists():
-            out_period_hist_counts_csv.unlink()
+        run_dir.mkdir(parents=True, exist_ok=True)
 
         summary_rows: List[Dict[str, Any]] = []
         inference_failures_by_epic: Dict[str, Dict[str, Any]] = {}
@@ -1018,7 +1655,18 @@ class K2ShortlistPeriodRunner:
                     f"{type(exc).__name__}: {exc} -> cluster-only mode"
                 )
 
-        print(f"[K2ShortlistPeriodRunner] targets={len(selected)} shortlist={shortlist_csv}")
+        print(
+            f"[K2ShortlistPeriodRunner] period_stage_selection_mode={selection_meta['period_stage_selection_mode']} "
+            f"period_stage_K={selection_meta.get('period_stage_k', None)} "
+            f"period_stage_N={selection_meta.get('period_stage_n', None)} "
+            f"period_stage_seed={selection_meta.get('period_stage_random_seed', None)} "
+            f"targets={len(selected)} shortlist={shortlist_csv} "
+            f"total_epics={int(len(raw_epics_df))} "
+            f"n_ranked_candidates={int(selection_meta.get('n_ranked_candidates', 0))} "
+            f"n_selected_for_period_stage={int(selection_meta.get('n_selected_for_period_stage', selection_meta.get('n_enter_period_stage_pre_slice', 0)))} "
+            f"n_enter_period_stage={int(selection_meta.get('n_enter_period_stage', len(selected)))} "
+            f"n_excluded_by_gate={int(selection_meta.get('n_excluded_by_gate', selection_meta.get('n_excluded_by_topk_gate', 0)))}"
+        )
         for i, query in enumerate(selected, start=1):
             epic_id = self._extract_epic(query)
             epic_folder = f"EPIC_{epic_id}" if epic_id is not None else None
@@ -1315,6 +1963,76 @@ class K2ShortlistPeriodRunner:
             out_png=out_period_hist_png,
             out_counts_csv=out_period_hist_counts_csv,
         )
+        funnel, funnel_reasons_df = self._build_epic_funnel_and_reasons(
+            raw_epics_df=raw_epics_df,
+            selected_queries=selected,
+            selection_meta=selection_meta,
+            df_summary_raw=df_summary_raw,
+            df_summary_valid=df_summary_valid,
+            df_summary_unique=df_summary_unique,
+            df_summary_validated_only=df_summary_validated_only,
+            best_df=best_df,
+            quarantine_df=quarantine_df,
+        )
+        out_epic_funnel_reasons_csv.parent.mkdir(parents=True, exist_ok=True)
+        funnel_reasons_df.to_csv(out_epic_funnel_reasons_csv, index=False)
+        reason_counts = funnel_reasons_df["terminal_reason"].fillna("other").astype(str).value_counts()
+        reason_total = max(1, int(reason_counts.sum()))
+        print("[K2ShortlistPeriodRunner] terminal_reason summary (top 10):")
+        for reason, count in reason_counts.head(10).items():
+            pct = (100.0 * float(count) / float(reason_total))
+            print(f"  {reason:32s} {int(count):7d} ({pct:6.2f}%)")
+        print("[K2ShortlistPeriodRunner] no_events breakdown:")
+        breakdown_str = str(funnel.get("no_events_breakdown_counts", "")).strip()
+        if breakdown_str == "" or breakdown_str.lower() == "nan":
+            print("  none")
+        else:
+            for token in breakdown_str.split("|"):
+                token = token.strip()
+                if token == "":
+                    continue
+                if ":" in token:
+                    key, value = token.rsplit(":", 1)
+                    print(f"  {key.strip()}: {value.strip()}")
+                else:
+                    print(f"  {token}")
+        total_epics = max(1, int(funnel["n_total_epics"]))
+        load_failed_count = int(
+            (funnel_reasons_df["terminal_reason"].fillna("").astype(str) == "no_lightcurve/load_failed").sum()
+        )
+        no_events_count = int(
+            (funnel_reasons_df["terminal_reason"].fillna("").astype(str) == "no_events").sum()
+        )
+        quarantined_no_cluster_periods = int(
+            quarantine_df.loc[
+                quarantine_df.get("source_reason", "").fillna("").astype(str).str.strip().str.lower() == "no_cluster_periods",
+                "epic_id",
+            ]
+            .fillna("")
+            .astype(str)
+            .nunique()
+        )
+        summary_lines = [
+            ("total_epics", int(funnel["n_total_epics"])),
+            ("entered_period_stage", int(funnel["n_enter_period_stage"])),
+            ("excluded_by_gate", int(funnel["n_excluded_by_gate"])),
+            ("load_failed", load_failed_count),
+            ("no_events", no_events_count),
+            ("candidate_periods_generated", int(funnel["n_with_candidate_periods_generated"])),
+            ("validated_period", int(funnel["n_validated_period"])),
+            ("quarantined_no_cluster_periods", quarantined_no_cluster_periods),
+        ]
+        print("[K2ShortlistPeriodRunner] Funnel Summary")
+        for key, value in summary_lines:
+            pct = (100.0 * float(value) / float(total_epics))
+            print(f"  {key:32s} {int(value):7d} ({pct:6.2f}%)")
+        print(
+            "[K2ShortlistPeriodRunner] dedup_counts "
+            f"best_count_rows={int(funnel['best_count_rows'])} "
+            f"best_unique_epics={int(funnel['best_unique_epics'])} "
+            f"summary_unique_epic_p={int(funnel['summary_unique_epic_p'])} "
+            f"validated_only_unique_epic_p={int(funnel['validated_only_unique_epic_p'])}"
+        )
 
         diagnostics_row = {
             "rows_total": int(diagnostics["rows_total"]),
@@ -1333,9 +2051,41 @@ class K2ShortlistPeriodRunner:
             "best_hist_total": int(hist_meta["best_hist_total"]),
             "best_bin_quotas": "|".join([f"{k}:{int(v)}" for k, v in bin_quotas.items()]),
             "best_bin_achieved": "|".join([f"{k}:{int(v)}" for k, v in bin_achieved.items()]),
+            "best_count_rows": int(funnel["best_count_rows"]),
+            "best_unique_epics": int(funnel["best_unique_epics"]),
+            "summary_unique_epic_p": int(funnel["summary_unique_epic_p"]),
+            "validated_only_unique_epic_p": int(funnel["validated_only_unique_epic_p"]),
+            "n_total_epics": int(funnel["n_total_epics"]),
+            "n_with_lightcurve_loaded": int(funnel["n_with_lightcurve_loaded"]),
+            "n_with_events_detected": int(funnel["n_with_events_detected"]),
+            "n_with_candidate_periods_generated": int(funnel["n_with_candidate_periods_generated"]),
+            "n_with_validated_periods": int(funnel["n_with_validated_periods"]),
+            "n_with_unique_epic_p": int(funnel["n_with_unique_epic_p"]),
+            "n_best_unique_epics": int(funnel["n_best_unique_epics"]),
+            "n_quarantined_epics": int(funnel["n_quarantined_epics"]),
+            "n_selected_for_period_stage": int(funnel["n_selected_for_period_stage"]),
+            "n_enter_period_stage": int(funnel["n_enter_period_stage"]),
+            "n_excluded_by_topk_gate": int(funnel["n_excluded_by_topk_gate"]),
+            "n_excluded_by_gate": int(funnel["n_excluded_by_gate"]),
+            "n_validated_period": int(funnel["n_validated_period"]),
+            "n_load_failed": int(load_failed_count),
+            "n_no_events": int(no_events_count),
+            "n_quarantined_no_cluster_periods": int(quarantined_no_cluster_periods),
+            "period_stage_selection_mode": str(funnel["period_stage_selection_mode"]),
+            "period_stage_ranking_basis": str(funnel["period_stage_ranking_basis"]),
+            "no_events_breakdown_counts": str(funnel["no_events_breakdown_counts"]),
+            "accept_rates_by_bin": "|".join([f"{k}:{float(v):.4f}" for k, v in hist_meta.get("accept_rates_by_bin", {}).items()]),
+            "low_acceptance_bins": "|".join([str(x) for x in hist_meta.get("low_acceptance_bins", [])]),
         }
         out_diagnostics_csv.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame([diagnostics_row]).to_csv(out_diagnostics_csv, index=False)
+        self._assert_output_consistency(
+            out_summary_csv=out_summary_csv,
+            out_best_csv=out_best_csv,
+            out_diagnostics_csv=out_diagnostics_csv,
+            expected_summary_unique_rows=int(len(df_summary_unique)),
+            expected_best_rows=int(n_best_rows),
+        )
 
         print(
             f"[K2ShortlistPeriodRunner] validated={run_counts['validations_run']} "
@@ -1348,16 +2098,21 @@ class K2ShortlistPeriodRunner:
         print(f"[K2ShortlistPeriodRunner] wrote summary_validated_only: {out_summary_validated_only_csv}")
         print(f"[K2ShortlistPeriodRunner] wrote best: {out_best_csv}")
         print(f"[K2ShortlistPeriodRunner] wrote quarantine: {out_quarantine_csv}")
+        print(f"[K2ShortlistPeriodRunner] wrote epic funnel reasons: {out_epic_funnel_reasons_csv}")
         print(f"[K2ShortlistPeriodRunner] wrote diagnostics: {out_diagnostics_csv}")
         print(f"[K2ShortlistPeriodRunner] wrote period histogram: {out_period_hist_png}")
         print(f"[K2ShortlistPeriodRunner] wrote period histogram counts: {out_period_hist_counts_csv}")
+        print(f"[K2ShortlistPeriodRunner] run_id={run_id} run_dir={run_dir}")
         return {
             "shortlist_csv": shortlist_csv,
+            "run_id": run_id,
+            "run_dir": run_dir,
             "out_summary_csv": out_summary_csv,
             "out_summary_unique_epicp_csv": out_summary_unique_epicp_csv,
             "out_summary_validated_only_csv": out_summary_validated_only_csv,
             "out_best_csv": out_best_csv,
             "out_quarantine_csv": out_quarantine_csv,
+            "out_epic_funnel_reasons_csv": out_epic_funnel_reasons_csv,
             "out_diagnostics_csv": out_diagnostics_csv,
             "out_period_hist_png": out_period_hist_png,
             "out_period_hist_counts_csv": out_period_hist_counts_csv,

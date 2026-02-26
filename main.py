@@ -31,6 +31,7 @@ def main():
         print(f"shortlist_top_shape_for_period.csv: {out['shortlist_top_shape_for_period_csv']}")
         print(f"rows_shortlist_top_shape: {out['rows_shortlist_top_shape']}")
         print(f"rows_shortlist_top_shape_for_period: {out['rows_shortlist_top_shape_for_period']}")
+        print(f"period_stage_max_epics: {out['period_stage_max_epics']}")
         return
     if len(argv) > 0 and argv[0] == "k2_shortlist_period":
         out = K2ShortlistPeriodRunner().run()
@@ -40,6 +41,7 @@ def main():
         print(f"period_shortlist_summary_validated_only.csv: {out['out_summary_validated_only_csv']}")
         print(f"period_shortlist_best.csv: {out['out_best_csv']}")
         print(f"period_shortlist_quarantine.csv: {out['out_quarantine_csv']}")
+        print(f"epic_funnel_reasons.csv: {out['out_epic_funnel_reasons_csv']}")
         print(f"period_shortlist_diagnostics.csv: {out['out_diagnostics_csv']}")
         print(f"period_hist_summary_vs_best.png: {out['out_period_hist_png']}")
         print(f"period_hist_summary_vs_best_counts.csv: {out['out_period_hist_counts_csv']}")

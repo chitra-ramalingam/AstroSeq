@@ -122,6 +122,42 @@ class TestK2ShortlistPeriodRunner(unittest.TestCase):
         self.assertEqual(sum(quotas.values()), 4)
         self.assertEqual(sum(achieved.values()), 4)
 
+    def test_period_stage_selector_topk_all_random(self) -> None:
+        raw = pd.DataFrame(
+            [
+                {"epic_id": "1", "query": "EPIC 1", "triage_status": "ok", "n_events": 5, "best_shape_score": 0.9, "best_depth_snr": 10.0},
+                {"epic_id": "2", "query": "EPIC 2", "triage_status": "ok", "n_events": 4, "best_shape_score": 0.8, "best_depth_snr": 9.0},
+                {"epic_id": "3", "query": "EPIC 3", "triage_status": "ok", "n_events": 3, "best_shape_score": 0.7, "best_depth_snr": 8.0},
+                {"epic_id": "4", "query": "EPIC 4", "triage_status": "error", "n_events": 0, "best_shape_score": 0.6, "best_depth_snr": 7.0},
+            ]
+        )
+        shortlist = pd.DataFrame({"query": ["EPIC 1", "EPIC 2"]})
+
+        topk_runner = K2ShortlistPeriodRunner(
+            config=K2ShortlistPeriodConfig(PERIOD_STAGE_SELECTION_MODE="topk", PERIOD_STAGE_K=2)
+        )
+        topk_selected, topk_meta = topk_runner._select_period_stage_queries(raw_epics_df=raw, shortlist_df=shortlist)
+        self.assertEqual(len(topk_selected), 2)
+        self.assertEqual(int(topk_meta["n_excluded_by_topk_gate"]), 1)
+
+        all_runner = K2ShortlistPeriodRunner(
+            config=K2ShortlistPeriodConfig(PERIOD_STAGE_SELECTION_MODE="all")
+        )
+        all_selected, all_meta = all_runner._select_period_stage_queries(raw_epics_df=raw, shortlist_df=shortlist)
+        self.assertEqual(len(all_selected), 4)
+        self.assertEqual(int(all_meta["n_excluded_by_topk_gate"]), 0)
+
+        random_runner = K2ShortlistPeriodRunner(
+            config=K2ShortlistPeriodConfig(
+                PERIOD_STAGE_SELECTION_MODE="randomN",
+                PERIOD_STAGE_N=2,
+                PERIOD_STAGE_RANDOM_SEED=1,
+            )
+        )
+        random_selected, random_meta = random_runner._select_period_stage_queries(raw_epics_df=raw, shortlist_df=shortlist)
+        self.assertEqual(len(random_selected), 2)
+        self.assertEqual(int(random_meta["n_excluded_by_topk_gate"]), 0)
+
     def test_dedupe_epic_period_prefers_validated_row(self) -> None:
         runner = K2ShortlistPeriodRunner()
         df = pd.DataFrame(
@@ -164,6 +200,53 @@ class TestK2ShortlistPeriodRunner(unittest.TestCase):
         self.assertEqual(int(counts_df["summary_count"].sum()), int(meta["summary_hist_total"]))
         self.assertEqual(int(counts_df["best_count"].sum()), int(meta["best_hist_total"]))
         shutil.rmtree(out_dir, ignore_errors=True)
+
+    def test_build_epic_funnel_and_reasons_assigns_terminal_reason(self) -> None:
+        runner = K2ShortlistPeriodRunner()
+        raw_epics_df = pd.DataFrame(
+            [
+                {"epic_id": "1", "query": "EPIC 1", "triage_status": "error", "triage_why_not_usable": "triage_status=error", "n_events": 0},
+                {"epic_id": "2", "query": "EPIC 2", "triage_status": "ok", "triage_why_not_usable": "", "n_events": 0},
+                {"epic_id": "3", "query": "EPIC 3", "triage_status": "ok", "triage_why_not_usable": "", "n_events": 5},
+            ]
+        )
+        df_summary_raw = pd.DataFrame(
+            [
+                {"epic": "3", "query": "EPIC 3", "reason": "cluster_only_validation_error", "P": 7.0},
+            ]
+        ).reindex(columns=runner.SUMMARY_COLUMNS)
+        df_summary_valid = df_summary_raw.copy()
+        df_summary_unique = df_summary_raw.copy()
+        df_summary_validated_only = pd.DataFrame(columns=runner.SUMMARY_COLUMNS)
+        best_df = pd.DataFrame([{"epic": "3", "P": 7.0}])
+        quarantine_df = pd.DataFrame(columns=runner.QUARANTINE_COLUMNS)
+
+        funnel, reasons = runner._build_epic_funnel_and_reasons(
+            raw_epics_df=raw_epics_df,
+            selected_queries=["EPIC 3"],
+            selection_meta={
+                "period_stage_selection_mode": "topk",
+                "period_stage_max_epics": 200,
+                "n_enter_period_stage": 1,
+                "n_excluded_by_topk_gate": 2,
+                "ranking_basis": "best_shape_score desc, best_depth_snr desc",
+            },
+            df_summary_raw=df_summary_raw,
+            df_summary_valid=df_summary_valid,
+            df_summary_unique=df_summary_unique,
+            df_summary_validated_only=df_summary_validated_only,
+            best_df=best_df,
+            quarantine_df=quarantine_df,
+        )
+
+        reason_map = dict(zip(reasons["epic_id"].astype(str), reasons["terminal_reason"].astype(str)))
+        self.assertEqual(reason_map["1"], "no_lightcurve/load_failed")
+        self.assertEqual(reason_map["2"], "no_events")
+        self.assertEqual(reason_map["3"], "fails_validation")
+        self.assertEqual(int(funnel["n_total_epics"]), 3)
+        self.assertEqual(int(funnel["n_best_unique_epics"]), 1)
+        self.assertEqual(int(funnel["n_enter_period_stage"]), 1)
+        self.assertEqual(int(funnel["n_excluded_by_topk_gate"]), 2)
 
 
 if __name__ == "__main__":
