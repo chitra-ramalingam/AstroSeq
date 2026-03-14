@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from datetime import datetime, timezone
@@ -42,6 +43,12 @@ class K2ShortlistPeriodRunner:
         "reason",
         "missing_upstream_source",
         "source_reason",
+        "whiteness_missing",
+        "whiteness_null_reason_category",
+        "shortlist_rejection_stage",
+        "shortlist_rejection_reason",
+        "rejected_before_candidate_scoring",
+        "rejected_after_candidate_scoring",
         "failure_category",
         "failure_detail",
         "n_events_raw",
@@ -51,12 +58,123 @@ class K2ShortlistPeriodRunner:
         "infer_tol_frac",
         "min_cluster_count",
         "period_cap_days",
+        "min_period_days",
+        "top_k_periods",
+        "hist_total",
+        "hist_finite_period",
+        "hist_in_period_range",
+        "hist_pass_cluster_count",
+        "hist_pass_all_filters",
         "P",
     ]
+    RAW_EPIC_REQUIRED_COLUMNS = [
+        "query",
+        "triage_status",
+        "triage_usable",
+        "triage_whiteness_definition",
+        "triage_why_not_usable",
+    ]
+    RAW_EPIC_REQUIRED_WHITENESS_VALUE_COLUMNS = ("triage_whiteness_pvalue", "triage_whiteness_score")
+
+    @classmethod
+    def build_parser(cls) -> argparse.ArgumentParser:
+        p = argparse.ArgumentParser(description="Run K2 shortlist period analysis from a whiteness-precomputed batch CSV.")
+        p.add_argument(
+            "--min-cluster-count",
+            "--min_cluster_count",
+            dest="min_cluster_count",
+            type=int,
+            default=K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT,
+            help=f"Minimum count_hits required for a candidate period cluster. Default: {K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT}",
+        )
+        p.add_argument(
+            "--run-id",
+            dest="run_id",
+            default=None,
+            help="Optional run identifier used for the output subdirectory.",
+        )
+        p.add_argument(
+            "--period-stage-n",
+            "--period_stage_n",
+            dest="period_stage_n",
+            type=int,
+            default=None,
+            help=(
+                "Optional override for PERIOD_STAGE_N when PERIOD_STAGE_SELECTION_MODE='randomN'. "
+                f"Default policy: {K2ShortlistPeriodConfig.PERIOD_STAGE_N}."
+            ),
+        )
+        p.add_argument(
+            "--cluster2-min-hit-rate-shape",
+            "--cluster2_min_hit_rate_shape",
+            dest="cluster2_min_hit_rate_shape",
+            type=float,
+            default=None,
+            help=(
+                "Validated-stage guardrail applied only when cluster_count==2. "
+                f"Rejects rows below this hit_rate_shape floor. Default policy: "
+                f"{K2ShortlistPeriodConfig.CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE}."
+            ),
+        )
+        p.add_argument(
+            "--cluster2-min-soft-hit-rate",
+            "--cluster2_min_soft_hit_rate",
+            dest="cluster2_min_soft_hit_rate",
+            type=float,
+            default=None,
+            help=(
+                "Validated-stage guardrail applied only when cluster_count==2. "
+                f"Rejects rows below this soft_hit_rate floor. Default policy: "
+                f"{K2ShortlistPeriodConfig.CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE}."
+            ),
+        )
+        return p
+
+    @classmethod
+    def run_cli(cls, argv: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+        args = cls.build_parser().parse_args(list(argv) if argv is not None else None)
+        config_kwargs: Dict[str, Any] = {
+            "MIN_CLUSTER_COUNT": int(args.min_cluster_count),
+            "RUN_ID": (str(args.run_id) if args.run_id is not None and str(args.run_id).strip() != "" else K2ShortlistPeriodConfig.RUN_ID),
+        }
+        if args.period_stage_n is not None:
+            config_kwargs["PERIOD_STAGE_N"] = int(args.period_stage_n)
+        if args.cluster2_min_hit_rate_shape is not None:
+            config_kwargs["CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE"] = float(args.cluster2_min_hit_rate_shape)
+        if args.cluster2_min_soft_hit_rate is not None:
+            config_kwargs["CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE"] = float(args.cluster2_min_soft_hit_rate)
+        config = K2ShortlistPeriodConfig(**config_kwargs)
+        return cls(config=config).run()
 
     def __init__(self, config: Optional[K2ShortlistPeriodConfig] = None) -> None:
         self.config = config if config is not None else K2ShortlistPeriodConfig()
         self._period_file_re = re.compile(r"^period_([0-9]+(?:\.[0-9]+)?)_(hits|misses|uncovered)\.csv$", flags=re.IGNORECASE)
+
+    def _mcc_policy_mode(self) -> str:
+        default_mcc = int(K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT)
+        current_mcc = int(getattr(self.config, "MIN_CLUSTER_COUNT", default_mcc))
+        experimental_mcc = int(getattr(self.config, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2))
+        if current_mcc == default_mcc:
+            return "default_scientific"
+        if current_mcc == experimental_mcc:
+            return "experimental_recovery"
+        return "custom_threshold"
+
+    def _mcc_policy_note(self) -> str:
+        mode = self._mcc_policy_mode()
+        if mode == "default_scientific":
+            return (
+                "MIN_CLUSTER_COUNT=3 is the default operating point. "
+                "MCC=2 remains experimental and cluster_count==2 validated rows require manual review."
+            )
+        if mode == "experimental_recovery":
+            return (
+                "MCC=2 increases validated yield, but preferentially admits lower-support, weaker-hit-rate "
+                "candidates; treat this run as experimental recovery mode."
+            )
+        return (
+            "Custom MIN_CLUSTER_COUNT in use; compare against the MCC=3 default before promoting any threshold change."
+        )
 
     @staticmethod
     def _sanitize_run_id(value: str) -> str:
@@ -253,6 +371,137 @@ class K2ShortlistPeriodRunner:
             "n_windows_with_no_candidates": no_cand,
             "no_cand": no_cand,
         }
+
+    def _annotate_validated_review_flags(self, df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        for c in [
+            "P",
+            "cluster_count",
+            "n_events_after_filters",
+            "hit_rate_snr",
+            "hit_rate_shape",
+            "soft_hit_rate",
+        ]:
+            out[c] = pd.to_numeric(out.get(c, np.nan), errors="coerce")
+        reason = out.get("reason", pd.Series([""] * len(out), index=out.index)).fillna("").astype(str).str.strip().str.lower()
+        review_cluster = int(getattr(self.config, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2))
+        shape_floor = getattr(self.config, "CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE", None)
+        soft_floor = getattr(self.config, "CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE", None)
+        short_period_max = float(getattr(self.config, "CLUSTER2_REVIEW_VERY_SHORT_PERIOD_DAYS_MAX", 1.0))
+        low_event_max = float(getattr(self.config, "CLUSTER2_REVIEW_LOW_EVENT_SUPPORT_MAX", 2))
+        near_zero_shape_max = float(getattr(self.config, "CLUSTER2_REVIEW_NEAR_ZERO_HIT_RATE_SHAPE_MAX", 0.05))
+        near_zero_snr_max = float(getattr(self.config, "CLUSTER2_REVIEW_NEAR_ZERO_HIT_RATE_SNR_MAX", 0.05))
+
+        validated_mask = reason.eq("validated")
+        cluster2_any_mask = out["cluster_count"].eq(float(review_cluster))
+        cluster2_mask = validated_mask & cluster2_any_mask
+        out["manual_review_required"] = cluster2_mask.astype(bool)
+        out["manual_review_reason"] = ""
+        out.loc[cluster2_mask, "manual_review_reason"] = (
+            f"validated_cluster_count=={review_cluster}; experimental MCC recovery candidate"
+        )
+        out["cluster2_watch_very_short_period"] = (cluster2_any_mask & out["P"].le(short_period_max)).astype(bool)
+        out["cluster2_watch_low_event_support"] = (cluster2_any_mask & out["n_events_after_filters"].le(low_event_max)).astype(bool)
+        out["cluster2_watch_near_zero_hit_rate_shape"] = (cluster2_any_mask & out["hit_rate_shape"].lt(near_zero_shape_max)).astype(bool)
+        out["cluster2_watch_near_zero_hit_rate_snr"] = (cluster2_any_mask & out["hit_rate_snr"].lt(near_zero_snr_max)).astype(bool)
+        watch_notes = pd.Series([""] * len(out), index=out.index, dtype=str)
+        watch_notes.loc[self._to_bool_series(out["cluster2_watch_very_short_period"], default=False)] = (
+            watch_notes.loc[self._to_bool_series(out["cluster2_watch_very_short_period"], default=False)] + "very_short_period;"
+        )
+        watch_notes.loc[self._to_bool_series(out["cluster2_watch_low_event_support"], default=False)] = (
+            watch_notes.loc[self._to_bool_series(out["cluster2_watch_low_event_support"], default=False)] + "two_filtered_events_or_fewer;"
+        )
+        watch_notes.loc[self._to_bool_series(out["cluster2_watch_near_zero_hit_rate_shape"], default=False)] = (
+            watch_notes.loc[self._to_bool_series(out["cluster2_watch_near_zero_hit_rate_shape"], default=False)] + "near_zero_hit_rate_shape;"
+        )
+        watch_notes.loc[self._to_bool_series(out["cluster2_watch_near_zero_hit_rate_snr"], default=False)] = (
+            watch_notes.loc[self._to_bool_series(out["cluster2_watch_near_zero_hit_rate_snr"], default=False)] + "near_zero_hit_rate_snr;"
+        )
+        out["cluster2_watch_notes"] = watch_notes.str.strip(";")
+        out["cluster2_guardrail_hit_rate_shape_min"] = float(shape_floor) if shape_floor is not None else np.nan
+        out["cluster2_guardrail_soft_hit_rate_min"] = float(soft_floor) if soft_floor is not None else np.nan
+        out["cluster2_guardrail_hit_rate_shape_pass"] = True
+        out["cluster2_guardrail_soft_hit_rate_pass"] = True
+        out["cluster2_guardrail_pass"] = True
+        out["cluster2_guardrail_reason"] = ""
+
+        if shape_floor is not None:
+            pass_shape = out["hit_rate_shape"].ge(float(shape_floor)) | (~cluster2_mask)
+            out["cluster2_guardrail_hit_rate_shape_pass"] = pass_shape.astype(bool)
+        if soft_floor is not None:
+            pass_soft = out["soft_hit_rate"].ge(float(soft_floor)) | (~cluster2_mask)
+            out["cluster2_guardrail_soft_hit_rate_pass"] = pass_soft.astype(bool)
+
+        guardrail_pass = (
+            self._to_bool_series(out["cluster2_guardrail_hit_rate_shape_pass"], default=True)
+            & self._to_bool_series(out["cluster2_guardrail_soft_hit_rate_pass"], default=True)
+        )
+        out["cluster2_guardrail_pass"] = (~cluster2_mask) | guardrail_pass
+
+        reasons = pd.Series([""] * len(out), index=out.index, dtype=str)
+        if shape_floor is not None:
+            fail_shape = cluster2_mask & (~self._to_bool_series(out["cluster2_guardrail_hit_rate_shape_pass"], default=True))
+            reasons.loc[fail_shape] = reasons.loc[fail_shape] + (
+                f"hit_rate_shape<{float(shape_floor):.3f};"
+            )
+        if soft_floor is not None:
+            fail_soft = cluster2_mask & (~self._to_bool_series(out["cluster2_guardrail_soft_hit_rate_pass"], default=True))
+            reasons.loc[fail_soft] = reasons.loc[fail_soft] + (
+                f"soft_hit_rate<{float(soft_floor):.3f};"
+            )
+        out["cluster2_guardrail_reason"] = reasons.str.strip(";")
+        return out
+
+    def _apply_cluster2_validated_guardrails(
+        self,
+        df_summary_valid: pd.DataFrame,
+        quarantine_df: pd.DataFrame,
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, int]:
+        annotated = self._annotate_validated_review_flags(df_summary_valid)
+        fail_mask = (
+            self._to_bool_series(annotated.get("manual_review_required", pd.Series([False] * len(annotated), index=annotated.index)))
+            & (~self._to_bool_series(annotated.get("cluster2_guardrail_pass", pd.Series([True] * len(annotated), index=annotated.index)), default=True))
+        )
+        if not bool(fail_mask.any()):
+            return annotated, quarantine_df.copy(), 0
+
+        kept = annotated.loc[~fail_mask].copy()
+        rejected = annotated.loc[fail_mask].copy()
+        q_add = pd.DataFrame(
+            {
+                "epic_id": rejected.get("epic", "").fillna("").astype(str),
+                "query": rejected.get("query", "").fillna("").astype(str),
+                "reason": "validated_guardrail_reject",
+                "missing_upstream_source": "",
+                "source_reason": "cluster2_guardrail_rejection",
+                "whiteness_missing": False,
+                "whiteness_null_reason_category": "",
+                "shortlist_rejection_stage": "validated_guardrail",
+                "shortlist_rejection_reason": "cluster2_guardrail_rejection",
+                "rejected_before_candidate_scoring": False,
+                "rejected_after_candidate_scoring": True,
+                "failure_category": "cluster2_guardrail_rejection",
+                "failure_detail": rejected.get("cluster2_guardrail_reason", "").fillna("").astype(str),
+                "n_events_raw": pd.to_numeric(rejected.get("n_events_raw", np.nan), errors="coerce"),
+                "n_events_after_filters": pd.to_numeric(rejected.get("n_events_after_filters", np.nan), errors="coerce"),
+                "infer_max_period_days": self._effective_max_period_days(),
+                "infer_min_hits": 1.0,
+                "infer_tol_frac": 0.01,
+                "min_cluster_count": float(getattr(self.config, "MIN_CLUSTER_COUNT", 3)),
+                "period_cap_days": self._effective_max_period_days(),
+                "min_period_days": self._as_float(getattr(self.config, "MIN_PERIOD_DAYS", 0.5), default=0.5),
+                "top_k_periods": float(getattr(self.config, "TOP_K_PERIODS", getattr(self.config, "VALIDATION_TOP_K", 3))),
+                "hist_total": np.nan,
+                "hist_finite_period": np.nan,
+                "hist_in_period_range": np.nan,
+                "hist_pass_cluster_count": np.nan,
+                "hist_pass_all_filters": np.nan,
+                "P": pd.to_numeric(rejected.get("P", np.nan), errors="coerce"),
+            }
+        ).reindex(columns=self.QUARANTINE_COLUMNS)
+
+        combined_quarantine = pd.concat([quarantine_df.copy(), q_add], ignore_index=True)
+        return kept, combined_quarantine, int(len(q_add))
 
     @staticmethod
     def _filter_candidate_period_rows(
@@ -608,20 +857,56 @@ class K2ShortlistPeriodRunner:
         m = re.search(r"\d+", text)
         return m.group(0) if m is not None else text
 
+    @staticmethod
+    def _whiteness_null_reason_category(
+        *,
+        triage_status: pd.Series,
+        triage_why_not_usable: pd.Series,
+        error_stage: pd.Series,
+        error_type: pd.Series,
+        error_msg: pd.Series,
+        whiteness_is_null: pd.Series,
+    ) -> pd.Series:
+        out = pd.Series([""] * len(triage_status), index=triage_status.index, dtype=str)
+        why = triage_why_not_usable.fillna("").astype(str).str.strip().str.lower()
+        has_error_detail = (
+            error_stage.fillna("").astype(str).str.strip().ne("")
+            | error_type.fillna("").astype(str).str.strip().ne("")
+            | error_msg.fillna("").astype(str).str.strip().ne("")
+        )
+        out.loc[whiteness_is_null & (triage_status == "error")] = "upstream_error"
+        out.loc[whiteness_is_null & has_error_detail & out.eq("")] = "upstream_error"
+        out.loc[
+            whiteness_is_null
+            & why.str.contains("n_points<|baseline_days<|robust_sigma<|outlier_rate|all_flux_nan|insufficient", regex=True)
+            & out.eq("")
+        ] = "noncomputable_quality_metrics"
+        out.loc[whiteness_is_null & out.eq("")] = "missing_or_noncomputable_whiteness"
+        return out
+
     def _load_raw_epic_table(self, shortlist_df: pd.DataFrame) -> pd.DataFrame:
         cfg = self.config
         raw_csv = cfg.raw_epic_list_csv_path
         query_col_cfg = str(getattr(cfg, "RAW_EPIC_QUERY_COL", "query"))
 
-        if raw_csv.exists():
-            raw = pd.read_csv(raw_csv)
-            source = str(raw_csv)
-        else:
-            raw = shortlist_df.copy()
-            source = f"fallback:{cfg.shortlist_csv_path}"
-            print(
-                f"[K2ShortlistPeriodRunner] raw EPIC list not found at {raw_csv}; "
-                f"falling back to shortlist."
+        if not raw_csv.exists():
+            raise FileNotFoundError(
+                f"[K2ShortlistPeriodRunner] raw EPIC list not found at {raw_csv}. "
+                "Run `python main.py k2_whiteness` first to precompute whiteness fields."
+            )
+        raw = pd.read_csv(raw_csv)
+        source = str(raw_csv)
+
+        missing = [c for c in self.RAW_EPIC_REQUIRED_COLUMNS if c not in raw.columns]
+        if len(missing) > 0:
+            raise ValueError(
+                f"[K2ShortlistPeriodRunner] raw EPIC list missing required columns: {missing}. "
+                f"input={raw_csv}"
+            )
+        if not any(c in raw.columns for c in self.RAW_EPIC_REQUIRED_WHITENESS_VALUE_COLUMNS):
+            raise ValueError(
+                "[K2ShortlistPeriodRunner] raw EPIC list must contain one whiteness value column: "
+                f"{list(self.RAW_EPIC_REQUIRED_WHITENESS_VALUE_COLUMNS)}. input={raw_csv}"
             )
 
         query_col = query_col_cfg if query_col_cfg in raw.columns else ("query" if "query" in raw.columns else "")
@@ -650,7 +935,11 @@ class K2ShortlistPeriodRunner:
             "triage_usable",
             "triage_score_global",
             "triage_n_points",
+            "triage_whiteness_pvalue",
+            "triage_whiteness_score",
             "triage_whiteness_definition",
+            "triage_whiteness_interpretation",
+            "triage_whiteness_higher_is_better",
             "n_events",
             "n_periods_proposed",
             "n_periods_validated",
@@ -668,10 +957,66 @@ class K2ShortlistPeriodRunner:
         out = out.loc[out["epic_id"] != ""].copy()
         out = out.drop_duplicates(subset=["epic_id"], keep="first").reset_index(drop=True)
 
+        whiteness_col = "triage_whiteness_pvalue" if "triage_whiteness_pvalue" in out.columns else "triage_whiteness_score"
+        w = pd.to_numeric(out.get(whiteness_col, np.nan), errors="coerce")
+        null_mask = w.isna()
+        out["triage_whiteness_value"] = w
+        out["triage_whiteness_is_null"] = null_mask
+        out["whiteness_missing"] = null_mask.astype(bool)
+        out["triage_usable"] = self._to_bool_series(
+            out.get("triage_usable", pd.Series([False] * len(out), index=out.index))
+        )
+        triage_status_series = out.get("triage_status", "").fillna("").astype(str).str.strip().str.lower()
+        why_not_series = out.get("triage_why_not_usable", "").fillna("").astype(str)
+        error_stage_series = out.get("error_stage", pd.Series([""] * len(out), index=out.index)).fillna("").astype(str)
+        error_type_series = out.get("error_type", pd.Series([""] * len(out), index=out.index)).fillna("").astype(str)
+        error_msg_series = out.get("error_msg", pd.Series([""] * len(out), index=out.index)).fillna("").astype(str)
+        out["whiteness_null_reason_category"] = self._whiteness_null_reason_category(
+            triage_status=triage_status_series,
+            triage_why_not_usable=why_not_series,
+            error_stage=error_stage_series,
+            error_type=error_type_series,
+            error_msg=error_msg_series,
+            whiteness_is_null=null_mask,
+        )
+        out["shortlist_rejection_stage"] = ""
+        out["shortlist_rejection_reason"] = ""
+        out["rejected_before_candidate_scoring"] = False
+        out["rejected_after_candidate_scoring"] = False
+        null_unusable_mask = null_mask & (~out["triage_usable"].astype(bool))
+        out.loc[null_unusable_mask, "shortlist_rejection_stage"] = "pre_candidate_scoring"
+        out.loc[null_unusable_mask, "shortlist_rejection_reason"] = "whiteness_null_and_triage_unusable"
+        out.loc[null_unusable_mask, "rejected_before_candidate_scoring"] = True
+        q_nonempty = out.get("query", "").fillna("").astype(str).str.strip() != ""
+        shortlist_attempt_mask = q_nonempty & out["epic_id"].ne("")
+        usable_series = self._to_bool_series(out.get("triage_usable", pd.Series([False] * len(out), index=out.index)))
+        null_usable_true = int((null_mask & usable_series).sum())
+        null_shortlist_attempt = int((null_mask & shortlist_attempt_mask).sum())
+        null_why = (
+            out.loc[null_mask, "triage_why_not_usable"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .replace("", "<empty>")
+            .value_counts()
+            .head(10)
+            .to_dict()
+        )
+
         print(
             f"[K2ShortlistPeriodRunner] raw_epic_source={source} "
             f"n_total_epics={len(out)}"
         )
+        print(
+            f"[K2ShortlistPeriodRunner] whiteness_null_policy=reject_if_null_and_triage_unusable "
+            f"whiteness_col={whiteness_col} "
+            f"null_whiteness_rows={int(null_mask.sum())} "
+            f"null_whiteness_usable_true={null_usable_true} "
+            f"null_whiteness_shortlist_attempt={null_shortlist_attempt}"
+        )
+        if len(null_why) > 0:
+            why_text = " | ".join([f"{k}:{int(v)}" for k, v in null_why.items()])
+            print(f"[K2ShortlistPeriodRunner] null_whiteness_top_why_not_usable: {why_text}")
         return out
 
     def _period_stage_selection_mode(self) -> str:
@@ -708,9 +1053,11 @@ class K2ShortlistPeriodRunner:
         work["n_events"] = pd.to_numeric(work["n_events"], errors="coerce")
         work["best_shape_score"] = pd.to_numeric(work["best_shape_score"], errors="coerce")
         work["best_depth_snr"] = pd.to_numeric(work["best_depth_snr"], errors="coerce")
+        rejection_reason = work.get("shortlist_rejection_reason", pd.Series([""] * len(work), index=work.index)).fillna("").astype(str).str.strip()
+        eligible_mask = rejection_reason.eq("")
 
         ranked = (
-            work.loc[(work["triage_status"] == "ok") & (work["n_events"] > 0) & (work["query"] != "")]
+            work.loc[eligible_mask & (work["triage_status"] == "ok") & (work["n_events"] > 0) & (work["query"] != "")]
             .sort_values(["best_shape_score", "best_depth_snr"], ascending=[False, False], kind="mergesort")
             .drop_duplicates(subset=["epic_id"], keep="first")
         )
@@ -735,6 +1082,8 @@ class K2ShortlistPeriodRunner:
             "ranking_basis": "best_shape_score desc, best_depth_snr desc",
             "n_ranked_candidates": 0,
             "n_population_for_gate": 0,
+            "n_population_before_shortlist_precheck": 0,
+            "n_excluded_by_shortlist_precheck": 0,
             "n_selected_for_period_stage": 0,
             "n_enter_period_stage_pre_slice": 0,
             "n_excluded_by_topk_gate": 0,
@@ -742,18 +1091,32 @@ class K2ShortlistPeriodRunner:
         }
 
         if mode == "all":
-            selected_df = raw_epics_df.copy()
-            selected_df["query"] = selected_df.get("query", "").fillna("").astype(str)
-            selected_df["epic_id"] = selected_df.get("epic_id", "").fillna("").astype(str).str.strip()
-            selected_df = selected_df.loc[selected_df["query"] != ""].drop_duplicates(subset=["epic_id"], keep="first")
+            base_all = raw_epics_df.copy()
+            base_all["query"] = base_all.get("query", "").fillna("").astype(str)
+            base_all["epic_id"] = base_all.get("epic_id", "").fillna("").astype(str).str.strip()
+            base_all["shortlist_rejection_reason"] = base_all.get(
+                "shortlist_rejection_reason",
+                pd.Series([""] * len(base_all), index=base_all.index),
+            ).fillna("").astype(str).str.strip()
+            base_all = base_all.loc[base_all["query"] != ""].drop_duplicates(subset=["epic_id"], keep="first")
+            selected_df = base_all.loc[base_all["shortlist_rejection_reason"].eq("")].copy()
+            selection_meta["n_population_before_shortlist_precheck"] = int(len(base_all))
+            selection_meta["n_excluded_by_shortlist_precheck"] = int(len(base_all) - len(selected_df))
             selection_meta["n_population_for_gate"] = int(len(selected_df))
         elif mode == "randomN":
             if period_stage_n is None:
                 raise ValueError("PERIOD_STAGE_SELECTION_MODE='randomN' requires PERIOD_STAGE_N to be set.")
-            base = raw_epics_df.copy()
-            base["query"] = base.get("query", "").fillna("").astype(str)
-            base["epic_id"] = base.get("epic_id", "").fillna("").astype(str).str.strip()
-            base = base.loc[base["query"] != ""].drop_duplicates(subset=["epic_id"], keep="first").reset_index(drop=True)
+            base_all = raw_epics_df.copy()
+            base_all["query"] = base_all.get("query", "").fillna("").astype(str)
+            base_all["epic_id"] = base_all.get("epic_id", "").fillna("").astype(str).str.strip()
+            base_all["shortlist_rejection_reason"] = base_all.get(
+                "shortlist_rejection_reason",
+                pd.Series([""] * len(base_all), index=base_all.index),
+            ).fillna("").astype(str).str.strip()
+            base_all = base_all.loc[base_all["query"] != ""].drop_duplicates(subset=["epic_id"], keep="first").reset_index(drop=True)
+            base = base_all.loc[base_all["shortlist_rejection_reason"].eq("")].copy().reset_index(drop=True)
+            selection_meta["n_population_before_shortlist_precheck"] = int(len(base_all))
+            selection_meta["n_excluded_by_shortlist_precheck"] = int(len(base_all) - len(base))
             selection_meta["n_population_for_gate"] = int(len(base))
             sample_n = max(0, int(period_stage_n))
             sample_n = min(sample_n, len(base))
@@ -766,6 +1129,18 @@ class K2ShortlistPeriodRunner:
         else:
             if period_stage_k is None:
                 raise ValueError("PERIOD_STAGE_SELECTION_MODE='topk' requires PERIOD_STAGE_K to be set.")
+            population_before = raw_epics_df.copy()
+            population_before["query"] = population_before.get("query", "").fillna("").astype(str)
+            population_before["epic_id"] = population_before.get("epic_id", "").fillna("").astype(str).str.strip()
+            population_before["shortlist_rejection_reason"] = population_before.get(
+                "shortlist_rejection_reason",
+                pd.Series([""] * len(population_before), index=population_before.index),
+            ).fillna("").astype(str).str.strip()
+            population_before = population_before.loc[population_before["query"] != ""].drop_duplicates(subset=["epic_id"], keep="first")
+            selection_meta["n_population_before_shortlist_precheck"] = int(len(population_before))
+            selection_meta["n_excluded_by_shortlist_precheck"] = int(
+                len(population_before.loc[population_before["shortlist_rejection_reason"] != ""])
+            )
             ranked = self._rank_raw_epics_for_period_stage(raw_epics_df=raw_epics_df)
             selection_meta["n_ranked_candidates"] = int(len(ranked))
             selection_meta["n_population_for_gate"] = int(len(ranked))
@@ -816,8 +1191,22 @@ class K2ShortlistPeriodRunner:
 
         reasons = raw_epics_df.copy()
         reasons["epic_id"] = reasons["epic_id"].fillna("").astype(str).str.strip()
-        reasons["query"] = reasons.get("query", "").fillna("").astype(str)
-        for c in ["triage_status", "triage_why_not_usable", "n_events", "n_periods_proposed", "n_periods_validated"]:
+        reasons["query"] = reasons.get(
+            "query", pd.Series([""] * len(reasons), index=reasons.index)
+        ).fillna("").astype(str)
+        for c in [
+            "triage_status",
+            "triage_why_not_usable",
+            "n_events",
+            "n_periods_proposed",
+            "n_periods_validated",
+            "whiteness_missing",
+            "whiteness_null_reason_category",
+            "shortlist_rejection_stage",
+            "shortlist_rejection_reason",
+            "rejected_before_candidate_scoring",
+            "rejected_after_candidate_scoring",
+        ]:
             if c not in reasons.columns:
                 reasons[c] = np.nan
         reasons["selected_for_period_stage"] = reasons["epic_id"].isin(selected_epics)
@@ -831,6 +1220,40 @@ class K2ShortlistPeriodRunner:
         reasons["no_events_n_points_after_clean"] = np.nan
         reasons["no_events_baseline_days"] = np.nan
         reasons["no_events_thresholds_used"] = ""
+        reasons["period_failure_category"] = ""
+        reasons["period_failure_detail"] = ""
+        reasons["period_n_events_raw"] = np.nan
+        reasons["period_n_events_after_filters"] = np.nan
+        reasons["period_infer_max_period_days"] = np.nan
+        reasons["period_infer_min_hits"] = np.nan
+        reasons["period_infer_tol_frac"] = np.nan
+        reasons["period_min_cluster_count"] = np.nan
+        reasons["period_cap_days"] = np.nan
+        reasons["period_min_period_days"] = np.nan
+        reasons["period_top_k_periods"] = np.nan
+        reasons["period_hist_total"] = np.nan
+        reasons["period_hist_finite_period"] = np.nan
+        reasons["period_hist_in_period_range"] = np.nan
+        reasons["period_hist_pass_cluster_count"] = np.nan
+        reasons["period_hist_pass_all_filters"] = np.nan
+        reasons["whiteness_missing"] = self._to_bool_series(
+            reasons.get("whiteness_missing", pd.Series([False] * len(reasons), index=reasons.index))
+        )
+        reasons["whiteness_null_reason_category"] = reasons.get(
+            "whiteness_null_reason_category", pd.Series([""] * len(reasons), index=reasons.index)
+        ).fillna("").astype(str)
+        reasons["shortlist_rejection_stage"] = reasons.get(
+            "shortlist_rejection_stage", pd.Series([""] * len(reasons), index=reasons.index)
+        ).fillna("").astype(str)
+        reasons["shortlist_rejection_reason"] = reasons.get(
+            "shortlist_rejection_reason", pd.Series([""] * len(reasons), index=reasons.index)
+        ).fillna("").astype(str)
+        reasons["rejected_before_candidate_scoring"] = self._to_bool_series(
+            reasons.get("rejected_before_candidate_scoring", pd.Series([False] * len(reasons), index=reasons.index))
+        )
+        reasons["rejected_after_candidate_scoring"] = self._to_bool_series(
+            reasons.get("rejected_after_candidate_scoring", pd.Series([False] * len(reasons), index=reasons.index))
+        )
         empty_s = pd.Series([""] * len(reasons), index=reasons.index, dtype=str)
 
         status = reasons.get("triage_status", "").fillna("").astype(str).str.strip().str.lower()
@@ -911,6 +1334,30 @@ class K2ShortlistPeriodRunner:
                     "source_reason": str(r.get("source_reason", "")),
                     "failure_category": str(r.get("failure_category", "")),
                     "failure_detail": str(r.get("failure_detail", "")),
+                    "n_events_raw": self._as_float(r.get("n_events_raw", np.nan)),
+                    "n_events_after_filters": self._as_float(r.get("n_events_after_filters", np.nan)),
+                    "infer_max_period_days": self._as_float(r.get("infer_max_period_days", np.nan)),
+                    "infer_min_hits": self._as_float(r.get("infer_min_hits", np.nan)),
+                    "infer_tol_frac": self._as_float(r.get("infer_tol_frac", np.nan)),
+                    "min_cluster_count": self._as_float(r.get("min_cluster_count", np.nan)),
+                    "period_cap_days": self._as_float(r.get("period_cap_days", np.nan)),
+                    "min_period_days": self._as_float(r.get("min_period_days", np.nan)),
+                    "top_k_periods": self._as_float(r.get("top_k_periods", np.nan)),
+                    "hist_total": self._as_float(r.get("hist_total", np.nan)),
+                    "hist_finite_period": self._as_float(r.get("hist_finite_period", np.nan)),
+                    "hist_in_period_range": self._as_float(r.get("hist_in_period_range", np.nan)),
+                    "hist_pass_cluster_count": self._as_float(r.get("hist_pass_cluster_count", np.nan)),
+                    "hist_pass_all_filters": self._as_float(r.get("hist_pass_all_filters", np.nan)),
+                    "whiteness_missing": bool(self._to_bool_series(pd.Series([r.get("whiteness_missing", False)])).iloc[0]),
+                    "whiteness_null_reason_category": str(r.get("whiteness_null_reason_category", "")),
+                    "shortlist_rejection_stage": str(r.get("shortlist_rejection_stage", "")),
+                    "shortlist_rejection_reason": str(r.get("shortlist_rejection_reason", "")),
+                    "rejected_before_candidate_scoring": bool(
+                        self._to_bool_series(pd.Series([r.get("rejected_before_candidate_scoring", False)])).iloc[0]
+                    ),
+                    "rejected_after_candidate_scoring": bool(
+                        self._to_bool_series(pd.Series([r.get("rejected_after_candidate_scoring", False)])).iloc[0]
+                    ),
                 }
                 for _, r in q_first.iterrows()
             }
@@ -956,6 +1403,34 @@ class K2ShortlistPeriodRunner:
             if q_info is not None:
                 q_reason = str(q_info.get("reason", "")).strip().lower()
                 src_reason = str(q_info.get("source_reason", "")).strip().lower()
+                reasons.at[idx, "period_failure_category"] = str(q_info.get("failure_category", ""))
+                reasons.at[idx, "period_failure_detail"] = str(q_info.get("failure_detail", ""))
+                reasons.at[idx, "period_n_events_raw"] = self._as_float(q_info.get("n_events_raw", np.nan))
+                reasons.at[idx, "period_n_events_after_filters"] = self._as_float(q_info.get("n_events_after_filters", np.nan))
+                reasons.at[idx, "period_infer_max_period_days"] = self._as_float(q_info.get("infer_max_period_days", np.nan))
+                reasons.at[idx, "period_infer_min_hits"] = self._as_float(q_info.get("infer_min_hits", np.nan))
+                reasons.at[idx, "period_infer_tol_frac"] = self._as_float(q_info.get("infer_tol_frac", np.nan))
+                reasons.at[idx, "period_min_cluster_count"] = self._as_float(q_info.get("min_cluster_count", np.nan))
+                reasons.at[idx, "period_cap_days"] = self._as_float(q_info.get("period_cap_days", np.nan))
+                reasons.at[idx, "period_min_period_days"] = self._as_float(q_info.get("min_period_days", np.nan))
+                reasons.at[idx, "period_top_k_periods"] = self._as_float(q_info.get("top_k_periods", np.nan))
+                reasons.at[idx, "period_hist_total"] = self._as_float(q_info.get("hist_total", np.nan))
+                reasons.at[idx, "period_hist_finite_period"] = self._as_float(q_info.get("hist_finite_period", np.nan))
+                reasons.at[idx, "period_hist_in_period_range"] = self._as_float(q_info.get("hist_in_period_range", np.nan))
+                reasons.at[idx, "period_hist_pass_cluster_count"] = self._as_float(q_info.get("hist_pass_cluster_count", np.nan))
+                reasons.at[idx, "period_hist_pass_all_filters"] = self._as_float(q_info.get("hist_pass_all_filters", np.nan))
+                reasons.at[idx, "whiteness_missing"] = bool(q_info.get("whiteness_missing", False))
+                reasons.at[idx, "whiteness_null_reason_category"] = str(q_info.get("whiteness_null_reason_category", ""))
+                reasons.at[idx, "shortlist_rejection_stage"] = str(
+                    q_info.get("shortlist_rejection_stage", "") or "post_candidate_scoring"
+                )
+                reasons.at[idx, "shortlist_rejection_reason"] = str(
+                    q_info.get("shortlist_rejection_reason", "") or src_reason or q_reason
+                )
+                reasons.at[idx, "rejected_before_candidate_scoring"] = bool(
+                    q_info.get("rejected_before_candidate_scoring", False)
+                )
+                reasons.at[idx, "rejected_after_candidate_scoring"] = True
                 if src_reason == "events_filtered_to_zero":
                     reasons.at[idx, "terminal_reason"] = "too_few_events_after_filters"
                     reasons.at[idx, "source_reason"] = str(q_info.get("failure_detail", "") or "events_filtered_to_zero")
@@ -967,6 +1442,9 @@ class K2ShortlistPeriodRunner:
                 elif q_reason == "p_above_max_period":
                     reasons.at[idx, "terminal_reason"] = "period_over_cap"
                     reasons.at[idx, "source_reason"] = "P_above_max_period"
+                elif src_reason == "cluster2_guardrail_rejection":
+                    reasons.at[idx, "terminal_reason"] = "validated_guardrail_reject"
+                    reasons.at[idx, "source_reason"] = src_reason
                 elif src_reason in validation_fail_reasons:
                     reasons.at[idx, "terminal_reason"] = "fails_validation"
                     reasons.at[idx, "source_reason"] = src_reason
@@ -991,9 +1469,15 @@ class K2ShortlistPeriodRunner:
                 if np.isfinite(n_after) and n_after < 2:
                     reasons.at[idx, "terminal_reason"] = "too_few_events_after_filters"
                     reasons.at[idx, "source_reason"] = f"n_events_after_filters={int(n_after)}"
+                    reasons.at[idx, "shortlist_rejection_stage"] = "post_candidate_scoring"
+                    reasons.at[idx, "shortlist_rejection_reason"] = "too_few_events_after_filters"
+                    reasons.at[idx, "rejected_after_candidate_scoring"] = True
                 elif "no_cluster_periods" in epic_reasons:
                     reasons.at[idx, "terminal_reason"] = "no_cluster_periods"
                     reasons.at[idx, "source_reason"] = "no_cluster_periods"
+                    reasons.at[idx, "shortlist_rejection_stage"] = "post_candidate_scoring"
+                    reasons.at[idx, "shortlist_rejection_reason"] = "no_cluster_periods"
+                    reasons.at[idx, "rejected_after_candidate_scoring"] = True
                 else:
                     reasons.at[idx, "terminal_reason"] = "other"
                     reasons.at[idx, "source_reason"] = "selected_but_no_period_rows"
@@ -1010,7 +1494,11 @@ class K2ShortlistPeriodRunner:
             gate_label = "not_in_period_stage_all_mode_slice_exclusion"
         else:
             gate_label = f"not_in_period_stage_mode_{mode}"
-        reasons.loc[not_selected_mask & other_mask, "source_reason"] = gate_label
+        explicit_precheck_mask = not_selected_mask & reasons["shortlist_rejection_reason"].fillna("").astype(str).str.strip().ne("")
+        reasons.loc[explicit_precheck_mask, "terminal_reason"] = "shortlist_precheck_reject"
+        reasons.loc[explicit_precheck_mask, "source_reason"] = reasons.loc[explicit_precheck_mask, "shortlist_rejection_reason"]
+        reasons.loc[explicit_precheck_mask, "rejected_before_candidate_scoring"] = True
+        reasons.loc[not_selected_mask & other_mask & ~explicit_precheck_mask, "source_reason"] = gate_label
         reasons["source_reason"] = reasons["source_reason"].fillna("").astype(str)
 
         n_total_epics = int(len(reasons))
@@ -1027,6 +1515,7 @@ class K2ShortlistPeriodRunner:
         n_enter_period_stage = int(selection_meta.get("n_enter_period_stage", len(selected_epics)))
         n_excluded_by_topk_gate = int(selection_meta.get("n_excluded_by_topk_gate", 0))
         n_excluded_by_gate = int(selection_meta.get("n_excluded_by_gate", n_excluded_by_topk_gate))
+        n_excluded_by_shortlist_precheck = int(selection_meta.get("n_excluded_by_shortlist_precheck", 0))
         n_validated_period = int(len(validated_epics))
         no_events_breakdown_counts = (
             reasons.loc[reasons["terminal_reason"] == "no_events", "no_events_breakdown"]
@@ -1041,6 +1530,7 @@ class K2ShortlistPeriodRunner:
             "n_enter_period_stage": n_enter_period_stage,
             "n_excluded_by_topk_gate": n_excluded_by_topk_gate,
             "n_excluded_by_gate": n_excluded_by_gate,
+            "n_excluded_by_shortlist_precheck": n_excluded_by_shortlist_precheck,
             "n_validated_period": n_validated_period,
             "n_with_lightcurve_loaded": n_with_lightcurve_loaded,
             "n_with_events_detected": n_with_events_detected,
@@ -1070,6 +1560,8 @@ class K2ShortlistPeriodRunner:
         reasons.loc[reasons["terminal_reason"] == "no_cluster_periods", "stage_reached"] = "period_inference"
         reasons.loc[reasons["terminal_reason"] == "period_over_cap", "stage_reached"] = "period_cap_filter"
         reasons.loc[reasons["terminal_reason"] == "fails_validation", "stage_reached"] = "period_validation"
+        reasons.loc[reasons["terminal_reason"] == "validated_guardrail_reject", "stage_reached"] = "validated_guardrail"
+        reasons.loc[reasons["terminal_reason"] == "shortlist_precheck_reject", "stage_reached"] = "pre_candidate_scoring"
         reasons.loc[reasons["source_reason"] == "validated_period", "stage_reached"] = "validated_period"
         reasons.loc[reasons["source_reason"] == "candidate_periods_generated", "stage_reached"] = "candidate_period_generation"
 
@@ -1088,6 +1580,28 @@ class K2ShortlistPeriodRunner:
             "no_events_n_points_after_clean",
             "no_events_baseline_days",
             "no_events_thresholds_used",
+            "period_failure_category",
+            "period_failure_detail",
+            "period_n_events_raw",
+            "period_n_events_after_filters",
+            "period_infer_max_period_days",
+            "period_infer_min_hits",
+            "period_infer_tol_frac",
+            "period_min_cluster_count",
+            "period_cap_days",
+            "period_min_period_days",
+            "period_top_k_periods",
+            "period_hist_total",
+            "period_hist_finite_period",
+            "period_hist_in_period_range",
+            "period_hist_pass_cluster_count",
+            "period_hist_pass_all_filters",
+            "whiteness_missing",
+            "whiteness_null_reason_category",
+            "shortlist_rejection_stage",
+            "shortlist_rejection_reason",
+            "rejected_before_candidate_scoring",
+            "rejected_after_candidate_scoring",
         ]
 
         def _to_details_json(row: pd.Series) -> str:
@@ -1139,10 +1653,17 @@ class K2ShortlistPeriodRunner:
         reasons["details_json"] = reasons.apply(_to_details_json, axis=1)
         reasons = reasons[
             [
+                "query",
                 "epic_id",
                 "terminal_reason",
                 "source_reason",
                 "stage_reached",
+                "whiteness_missing",
+                "whiteness_null_reason_category",
+                "shortlist_rejection_stage",
+                "shortlist_rejection_reason",
+                "rejected_before_candidate_scoring",
+                "rejected_after_candidate_scoring",
                 "details_json",
             ]
         ].copy()
@@ -1181,6 +1702,12 @@ class K2ShortlistPeriodRunner:
         quarantine["reason"] = invalid_reason[invalid_mask]
         quarantine["missing_upstream_source"] = quarantine["source_reason"].map(self._missing_upstream_source)
         quarantine["epic_id"] = quarantine.get("epic", pd.Series([""] * len(quarantine), index=quarantine.index)).astype(str)
+        quarantine["whiteness_missing"] = False
+        quarantine["whiteness_null_reason_category"] = ""
+        quarantine["shortlist_rejection_stage"] = "post_candidate_scoring"
+        quarantine["shortlist_rejection_reason"] = quarantine["source_reason"].fillna("").astype(str)
+        quarantine["rejected_before_candidate_scoring"] = False
+        quarantine["rejected_after_candidate_scoring"] = True
         quarantine["failure_category"] = ""
         quarantine["failure_detail"] = ""
         quarantine["infer_max_period_days"] = np.nan
@@ -1188,6 +1715,22 @@ class K2ShortlistPeriodRunner:
         quarantine["infer_tol_frac"] = np.nan
         quarantine["min_cluster_count"] = np.nan
         quarantine["period_cap_days"] = np.nan
+        quarantine["min_period_days"] = np.nan
+        quarantine["top_k_periods"] = np.nan
+        quarantine["hist_total"] = np.nan
+        quarantine["hist_finite_period"] = np.nan
+        quarantine["hist_in_period_range"] = np.nan
+        quarantine["hist_pass_cluster_count"] = np.nan
+        quarantine["hist_pass_all_filters"] = np.nan
+        source_reason_low = quarantine["source_reason"].fillna("").astype(str).str.strip().str.lower()
+        quarantine.loc[source_reason_low == "events_filtered_to_zero", "failure_category"] = "events_filtered_to_zero"
+        quarantine.loc[source_reason_low == "events_filtered_to_zero", "failure_detail"] = (
+            "all_events_removed_before_period_inference"
+        )
+        quarantine.loc[source_reason_low == "missing_events_csv", "failure_category"] = "missing_events_csv"
+        quarantine.loc[source_reason_low == "missing_events_csv", "failure_detail"] = "events_csv_not_found"
+        quarantine.loc[source_reason_low == "cannot_parse_epic", "failure_category"] = "cannot_parse_epic"
+        quarantine.loc[source_reason_low == "cannot_parse_epic", "failure_detail"] = "query_to_epic_parse_failed"
         quarantine = quarantine.reindex(columns=self.QUARANTINE_COLUMNS)
 
         valid = work.loc[~invalid_mask].copy().reindex(columns=self.SUMMARY_COLUMNS)
@@ -1308,9 +1851,44 @@ class K2ShortlistPeriodRunner:
         if len(quarantine_df) == 0:
             return quarantine_df.copy().reindex(columns=self.QUARANTINE_COLUMNS)
         out = quarantine_df.copy()
+        numeric_cols = {
+            "P",
+            "n_events_raw",
+            "n_events_after_filters",
+            "infer_max_period_days",
+            "infer_min_hits",
+            "infer_tol_frac",
+            "min_cluster_count",
+            "period_cap_days",
+            "min_period_days",
+            "top_k_periods",
+            "hist_total",
+            "hist_finite_period",
+            "hist_in_period_range",
+            "hist_pass_cluster_count",
+            "hist_pass_all_filters",
+        }
         for c in self.QUARANTINE_COLUMNS:
             if c not in out.columns:
-                out[c] = np.nan if c in {"P", "n_events_raw", "n_events_after_filters", "infer_max_period_days", "infer_min_hits", "infer_tol_frac", "min_cluster_count", "period_cap_days"} else ""
+                out[c] = np.nan if c in numeric_cols else ""
+        out["whiteness_missing"] = self._to_bool_series(
+            out.get("whiteness_missing", pd.Series([False] * len(out), index=out.index))
+        )
+        out["rejected_before_candidate_scoring"] = self._to_bool_series(
+            out.get("rejected_before_candidate_scoring", pd.Series([False] * len(out), index=out.index))
+        )
+        out["rejected_after_candidate_scoring"] = self._to_bool_series(
+            out.get("rejected_after_candidate_scoring", pd.Series([True] * len(out), index=out.index))
+        )
+        out["shortlist_rejection_stage"] = out.get(
+            "shortlist_rejection_stage", pd.Series(["post_candidate_scoring"] * len(out), index=out.index)
+        ).fillna("").astype(str)
+        out["shortlist_rejection_reason"] = out.get(
+            "shortlist_rejection_reason", pd.Series([""] * len(out), index=out.index)
+        ).fillna("").astype(str)
+        out["whiteness_null_reason_category"] = out.get(
+            "whiteness_null_reason_category", pd.Series([""] * len(out), index=out.index)
+        ).fillna("").astype(str)
 
         no_cluster_mask = (
             out.get("source_reason", pd.Series([""] * len(out), index=out.index)).fillna("").astype(str).str.strip().str.lower()
@@ -1336,12 +1914,25 @@ class K2ShortlistPeriodRunner:
             out.at[idx, "infer_tol_frac"] = self._as_float(params.get("infer_tol_frac", np.nan))
             out.at[idx, "min_cluster_count"] = self._as_float(params.get("min_cluster_count", np.nan))
             out.at[idx, "period_cap_days"] = self._as_float(params.get("period_cap_days", self._effective_max_period_days()))
+            out.at[idx, "min_period_days"] = self._as_float(params.get("min_period_days", np.nan))
+            out.at[idx, "top_k_periods"] = self._as_float(params.get("top_k_periods", np.nan))
+            extra = payload.get("extra", {}) if isinstance(payload.get("extra", {}), dict) else {}
+            out.at[idx, "hist_total"] = self._as_float(extra.get("hist_total", np.nan))
+            out.at[idx, "hist_finite_period"] = self._as_float(extra.get("hist_finite_period", np.nan))
+            out.at[idx, "hist_in_period_range"] = self._as_float(extra.get("hist_in_period_range", np.nan))
+            out.at[idx, "hist_pass_cluster_count"] = self._as_float(extra.get("hist_pass_cluster_count", np.nan))
+            out.at[idx, "hist_pass_all_filters"] = self._as_float(extra.get("hist_pass_all_filters", np.nan))
+            out.at[idx, "shortlist_rejection_stage"] = "post_candidate_scoring"
+            out.at[idx, "shortlist_rejection_reason"] = str(payload.get("failure_category", "") or payload.get("detail", ""))
+            out.at[idx, "rejected_before_candidate_scoring"] = False
+            out.at[idx, "rejected_after_candidate_scoring"] = True
 
         return out.reindex(columns=self.QUARANTINE_COLUMNS)
 
     def _dedupe_epic_period_rows(self, df: pd.DataFrame) -> pd.DataFrame:
         if len(df) == 0:
             return df.copy().reindex(columns=self.SUMMARY_COLUMNS)
+        input_cols = list(df.columns)
         work = df.copy()
         for c in ["P", "soft_hit_rate", "hit_rate_snr", "hit_rate_shape", "cluster_count"]:
             work[c] = pd.to_numeric(work.get(c, np.nan), errors="coerce")
@@ -1355,7 +1946,7 @@ class K2ShortlistPeriodRunner:
             kind="mergesort",
         )
         dedup = work.drop_duplicates(subset=["epic", "_p_key"], keep="first").copy()
-        dedup = dedup.reindex(columns=self.SUMMARY_COLUMNS).reset_index(drop=True)
+        dedup = dedup.reindex(columns=input_cols).reset_index(drop=True)
         return dedup
 
     def _select_best_rows_stratified(
@@ -1662,11 +2253,20 @@ class K2ShortlistPeriodRunner:
             f"period_stage_seed={selection_meta.get('period_stage_random_seed', None)} "
             f"targets={len(selected)} shortlist={shortlist_csv} "
             f"total_epics={int(len(raw_epics_df))} "
+            f"n_excluded_by_shortlist_precheck={int(selection_meta.get('n_excluded_by_shortlist_precheck', 0))} "
             f"n_ranked_candidates={int(selection_meta.get('n_ranked_candidates', 0))} "
             f"n_selected_for_period_stage={int(selection_meta.get('n_selected_for_period_stage', selection_meta.get('n_enter_period_stage_pre_slice', 0)))} "
             f"n_enter_period_stage={int(selection_meta.get('n_enter_period_stage', len(selected)))} "
             f"n_excluded_by_gate={int(selection_meta.get('n_excluded_by_gate', selection_meta.get('n_excluded_by_topk_gate', 0)))}"
         )
+        print(f"[K2ShortlistPeriodRunner] mcc_policy_mode={self._mcc_policy_mode()}")
+        print(f"[K2ShortlistPeriodRunner] note: {self._mcc_policy_note()}")
+        if getattr(cfg, "CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE", None) is not None or getattr(cfg, "CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE", None) is not None:
+            print(
+                f"[K2ShortlistPeriodRunner] cluster2_guardrails "
+                f"hit_rate_shape_min={getattr(cfg, 'CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE', None)} "
+                f"soft_hit_rate_min={getattr(cfg, 'CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE', None)}"
+            )
         for i, query in enumerate(selected, start=1):
             epic_id = self._extract_epic(query)
             epic_folder = f"EPIC_{epic_id}" if epic_id is not None else None
@@ -1897,6 +2497,10 @@ class K2ShortlistPeriodRunner:
             quarantine_df=quarantine_df,
             inference_failures_by_epic=inference_failures_by_epic,
         )
+        df_summary_valid, quarantine_df, n_cluster2_guardrail_rejected = self._apply_cluster2_validated_guardrails(
+            df_summary_valid=df_summary_valid,
+            quarantine_df=quarantine_df,
+        )
         out_quarantine_csv.parent.mkdir(parents=True, exist_ok=True)
         quarantine_df.to_csv(out_quarantine_csv, index=False)
         self._enforce_null_p_rate_threshold(diagnostics=diagnostics, quarantine_df=quarantine_df)
@@ -1932,6 +2536,8 @@ class K2ShortlistPeriodRunner:
                 f"[K2ShortlistPeriodRunner] df_summary_unique[{metric_cols}].describe():\n"
                 f"{df_summary_unique[metric_cols].describe()}"
             )
+        if n_cluster2_guardrail_rejected > 0:
+            print(f"[K2ShortlistPeriodRunner] cluster2_guardrail_rejected={n_cluster2_guardrail_rejected}")
 
         work = df_summary_unique.copy().reset_index(drop=False).rename(columns={"index": "_row_order"})
         if "epic" not in work.columns:
@@ -2015,6 +2621,7 @@ class K2ShortlistPeriodRunner:
         summary_lines = [
             ("total_epics", int(funnel["n_total_epics"])),
             ("entered_period_stage", int(funnel["n_enter_period_stage"])),
+            ("excluded_by_shortlist_precheck", int(funnel.get("n_excluded_by_shortlist_precheck", 0))),
             ("excluded_by_gate", int(funnel["n_excluded_by_gate"])),
             ("load_failed", load_failed_count),
             ("no_events", no_events_count),
@@ -2035,6 +2642,17 @@ class K2ShortlistPeriodRunner:
         )
 
         diagnostics_row = {
+            "mcc_policy_mode": str(self._mcc_policy_mode()),
+            "mcc_policy_note": str(self._mcc_policy_note()),
+            "min_cluster_count": int(getattr(cfg, "MIN_CLUSTER_COUNT", K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT)),
+            "default_min_cluster_count": int(K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT),
+            "manual_review_cluster_count_eq": int(getattr(cfg, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2)),
+            "cluster2_guardrail_hit_rate_shape_min": self._as_float(
+                getattr(cfg, "CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE", float("nan"))
+            ),
+            "cluster2_guardrail_soft_hit_rate_min": self._as_float(
+                getattr(cfg, "CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE", float("nan"))
+            ),
             "rows_total": int(diagnostics["rows_total"]),
             "rows_null_p": int(diagnostics["rows_null_p"]),
             "rows_invalid_p": int(diagnostics["rows_invalid_p"]),
@@ -2067,6 +2685,7 @@ class K2ShortlistPeriodRunner:
             "n_enter_period_stage": int(funnel["n_enter_period_stage"]),
             "n_excluded_by_topk_gate": int(funnel["n_excluded_by_topk_gate"]),
             "n_excluded_by_gate": int(funnel["n_excluded_by_gate"]),
+            "n_excluded_by_shortlist_precheck": int(funnel.get("n_excluded_by_shortlist_precheck", 0)),
             "n_validated_period": int(funnel["n_validated_period"]),
             "n_load_failed": int(load_failed_count),
             "n_no_events": int(no_events_count),

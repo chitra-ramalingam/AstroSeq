@@ -96,6 +96,8 @@ class K2NoiseLoader:
                 "outlier_rate_6sigma": np.nan,
                 "outlier_rate_global": np.nan,
                 "step_score": np.nan,
+                # NaN whiteness indicates metric unavailable because this row failed before
+                # a valid residual autocorrelation test could be computed.
                 "whiteness_score": np.nan,
             }
         )

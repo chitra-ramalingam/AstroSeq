@@ -632,8 +632,10 @@ class K2_NoiseHandler:
         step = float(np.nanmedian(np.abs(df)) / (rsig + 1e-12))
 
         # whiteness_score:
-        # - statistic mode: absolute lag-1 autocorr (lower is whiter)
-        # - pvalue mode: two-sided normal approximation p-value for lag-1 autocorr (higher is whiter)
+        # - statistic mode: |rho_1| where rho_1 is lag-1 autocorrelation (lower is whiter)
+        # - pvalue mode: p = 2*(1-Phi(|rho_1|*sqrt(n-1))) = erfc(|rho_1|*sqrt(n-1)/sqrt(2))
+        #   This is a two-sided normal-approximation p-value for H0: rho_1 = 0.
+        #   Higher p indicates residuals are more consistent with whiteness at lag 1.
         fr = f - med
         if np.all(~np.isfinite(fr)) or np.nanstd(fr) == 0:
             w = np.nan

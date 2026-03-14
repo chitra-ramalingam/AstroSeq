@@ -489,36 +489,51 @@ class K2BatchRunner:
         if not batch_path.exists():
             raise FileNotFoundError(f"batch_results.csv not found: {batch_path}")
 
-        df = pd.read_csv(batch_path)
+        df = self.retriage_results_df(pd.read_csv(batch_path))
+
+        if write:
+            df.to_csv(batch_path, index=False)
+
+        print(
+            f"[retriage] rows={len(df)} "
+            f"whiteness_threshold={self.noisy_whiteness_threshold} "
+            f"definition_default={self.noise_loader.handler.whiteness_definition()}"
+        )
+        return {"batch_results_csv": batch_path, "results_df": df}
+
+    def retriage_results_df(self, df: pd.DataFrame) -> pd.DataFrame:
         self._require_columns(df, ["triage_status"], context="retriage")
 
-        if "triage_step_score" not in df.columns:
-            df["triage_step_score"] = np.nan
-        if "triage_whiteness_score" not in df.columns:
-            df["triage_whiteness_score"] = np.nan
-        if "triage_why_not_usable" not in df.columns:
-            df["triage_why_not_usable"] = ""
-        if "triage_whiteness_definition" not in df.columns:
-            df["triage_whiteness_definition"] = ""
-        if "label" not in df.columns:
-            df["label"] = ""
-        if "label_reason" not in df.columns:
-            df["label_reason"] = ""
-        if "n_events" not in df.columns:
-            df["n_events"] = 0
+        work = df.copy()
+        if "triage_step_score" not in work.columns:
+            work["triage_step_score"] = np.nan
+        if "triage_whiteness_score" not in work.columns:
+            # Preserve semantic distinction: NaN means upstream whiteness metric is unavailable,
+            # not that the source is necessarily white/noisy.
+            work["triage_whiteness_score"] = np.nan
+        if "triage_why_not_usable" not in work.columns:
+            work["triage_why_not_usable"] = ""
+        if "triage_whiteness_definition" not in work.columns:
+            work["triage_whiteness_definition"] = ""
+        if "label" not in work.columns:
+            work["label"] = ""
+        if "label_reason" not in work.columns:
+            work["label_reason"] = ""
+        if "n_events" not in work.columns:
+            work["n_events"] = 0
 
-        for idx in df.index:
-            status = str(df.at[idx, "triage_status"]).strip().lower()
-            step = self._as_float(df.at[idx, "triage_step_score"], default=float("nan"))
-            white = self._as_float(df.at[idx, "triage_whiteness_score"], default=float("nan"))
+        for idx in work.index:
+            status = str(work.at[idx, "triage_status"]).strip().lower()
+            step = self._as_float(work.at[idx, "triage_step_score"], default=float("nan"))
+            white = self._as_float(work.at[idx, "triage_whiteness_score"], default=float("nan"))
 
-            wdef_raw = str(df.at[idx, "triage_whiteness_definition"]).strip()
+            wdef_raw = str(work.at[idx, "triage_whiteness_definition"]).strip()
             if (wdef_raw == "") or (wdef_raw.lower() == "nan"):
                 wdef_raw = self.noise_loader.handler.whiteness_definition()
             whiteness_is_pvalue = "pvalue" in wdef_raw.lower()
-            df.at[idx, "triage_whiteness_definition"] = wdef_raw
+            work.at[idx, "triage_whiteness_definition"] = wdef_raw
 
-            reasons = self._strip_retriage_managed_reasons(df.at[idx, "triage_why_not_usable"])
+            reasons = self._strip_retriage_managed_reasons(work.at[idx, "triage_why_not_usable"])
             if status != "ok":
                 reasons.append(f"triage_status={status or 'unknown'}")
             if np.isfinite(step) and np.isfinite(self.noisy_step_threshold) and step > self.noisy_step_threshold:
@@ -530,13 +545,12 @@ class K2BatchRunner:
                 elif white > self.noisy_whiteness_threshold:
                     reasons.append(f"whiteness_score>{self.noisy_whiteness_threshold:.3f} ({white:.3f})")
 
-            # Deduplicate while preserving order.
             reasons = list(dict.fromkeys([r for r in reasons if str(r).strip() != ""]))
 
             triage_usable = (status == "ok") and (len(reasons) == 0)
             triage_why = ";".join(reasons)
-            df.at[idx, "triage_usable"] = bool(triage_usable)
-            df.at[idx, "triage_why_not_usable"] = triage_why
+            work.at[idx, "triage_usable"] = bool(triage_usable)
+            work.at[idx, "triage_why_not_usable"] = triage_why
 
             triage_dict = {
                 "status": status,
@@ -547,20 +561,12 @@ class K2BatchRunner:
                 "whiteness_definition": wdef_raw,
             }
             hard_reasons = self._hard_fail_reasons(triage_dict)
-            row_for_label = df.loc[idx].to_dict()
+            row_for_label = work.loc[idx].to_dict()
             label, reason = self._label_row(row=row_for_label, hard_reasons=hard_reasons)
-            df.at[idx, "label"] = label
-            df.at[idx, "label_reason"] = reason
+            work.at[idx, "label"] = label
+            work.at[idx, "label_reason"] = reason
 
-        if write:
-            df.to_csv(batch_path, index=False)
-
-        print(
-            f"[retriage] rows={len(df)} "
-            f"whiteness_threshold={self.noisy_whiteness_threshold} "
-            f"definition_default={self.noise_loader.handler.whiteness_definition()}"
-        )
-        return {"batch_results_csv": batch_path, "results_df": df}
+        return work
 
     def rebuild_leaderboards(
         self,

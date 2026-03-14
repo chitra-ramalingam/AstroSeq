@@ -7,7 +7,10 @@ from typing import Optional, Tuple
 
 @dataclass(frozen=True)
 class K2ShortlistPeriodConfig:
-    RAW_EPIC_LIST_CSV: str = r"plots\k2_batch\batch_results_retriaged.csv"
+    # Experimental note: MCC=2 increases validated yield, but preferentially admits
+    # lower-support, weaker-hit-rate candidates, so it remains a recovery mode rather
+    # than the default operating point.
+    RAW_EPIC_LIST_CSV: str = r"plots\k2_batch\batch_results_whiteness.csv"
     RAW_EPIC_QUERY_COL: str = "query"
     SHORTLIST_CSV: str = r"plots\k2_batch\shortlist_top_shape_for_period.csv"
     EPICS_DIR: str = r"plots\k2_batch\epics"
@@ -21,15 +24,15 @@ class K2ShortlistPeriodConfig:
     OUT_EPIC_FUNNEL_REASONS_CSV: str = r"epic_funnel_reasons.csv"
     OUT_PERIOD_HIST_PNG: str = r"period_hist_summary_vs_best.png"
     OUT_PERIOD_HIST_COUNTS_CSV: str = r"period_hist_summary_vs_best_counts.csv"
-    RUN_ID: Optional[str] = None
+    RUN_ID: Optional[str] = r"slice_200"
     USE_RUN_SUBDIR: bool = True
 
     MAX_TARGETS: Optional[int] = None
     START_INDEX: int = 0
     END_INDEX: Optional[int] = None
     PERIOD_STAGE_MODE: Optional[str] = None
-    PERIOD_STAGE_K: Optional[int] = 200
-    PERIOD_STAGE_N: Optional[int] = 5000
+    PERIOD_STAGE_K: Optional[int] = 50 #200
+    PERIOD_STAGE_N: Optional[int] = 50 #25771
     PERIOD_STAGE_SELECTION_MODE: str = "randomN"
     PERIOD_STAGE_MAX_EPICS: Optional[int] = None
     PERIOD_STAGE_RANDOM_SAMPLE_SIZE: Optional[int] = None
@@ -50,8 +53,15 @@ class K2ShortlistPeriodConfig:
         "events_filtered_to_zero",
     )
     MIN_CLUSTER_COUNT: int = 3
+    MANUAL_REVIEW_CLUSTER_COUNT_EQ: int = 2
+    CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE: Optional[float] = 0.10
+    CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE: Optional[float] = 0.10
+    CLUSTER2_REVIEW_VERY_SHORT_PERIOD_DAYS_MAX: float = 1.0
+    CLUSTER2_REVIEW_LOW_EVENT_SUPPORT_MAX: int = 2
+    CLUSTER2_REVIEW_NEAR_ZERO_HIT_RATE_SHAPE_MAX: float = 0.05
+    CLUSTER2_REVIEW_NEAR_ZERO_HIT_RATE_SNR_MAX: float = 0.05
     ENABLE_VALIDATION: bool = True
-    CACHE_ONLY_FIRST: bool = True
+    CACHE_ONLY_FIRST: bool = False
     DOWNLOAD_IF_CACHE_MISS: bool = True
     TOP_K_PERIODS: int = 3
     VALIDATION_TOP_K: int = 3
