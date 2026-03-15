@@ -153,24 +153,24 @@ class K2ShortlistPeriodRunner:
     def _mcc_policy_mode(self) -> str:
         default_mcc = int(K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT)
         current_mcc = int(getattr(self.config, "MIN_CLUSTER_COUNT", default_mcc))
-        experimental_mcc = int(getattr(self.config, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2))
+        high_recall_mcc = int(getattr(self.config, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2))
         if current_mcc == default_mcc:
-            return "default_scientific"
-        if current_mcc == experimental_mcc:
-            return "experimental_recovery"
+            return str(getattr(self.config, "PRECISION_FIRST_MODE_NAME", "precision_first_default"))
+        if current_mcc == high_recall_mcc:
+            return str(getattr(self.config, "HIGH_RECALL_MODE_NAME", "supported_high_recall"))
         return "custom_threshold"
 
     def _mcc_policy_note(self) -> str:
         mode = self._mcc_policy_mode()
-        if mode == "default_scientific":
+        if mode == str(getattr(self.config, "PRECISION_FIRST_MODE_NAME", "precision_first_default")):
             return (
-                "MIN_CLUSTER_COUNT=3 is the default operating point. "
-                "MCC=2 remains experimental and cluster_count==2 validated rows require manual review."
+                "MIN_CLUSTER_COUNT=3 is the conservative, precision-first default. "
+                "MCC=2 is the supported high-recall mode and cluster_count==2 validated rows require guardrails and manual review."
             )
-        if mode == "experimental_recovery":
+        if mode == str(getattr(self.config, "HIGH_RECALL_MODE_NAME", "supported_high_recall")):
             return (
-                "MCC=2 increases validated yield, but preferentially admits lower-support, weaker-hit-rate "
-                "candidates; treat this run as experimental recovery mode."
+                "MIN_CLUSTER_COUNT=2 is the supported high-recall mode. "
+                "It increases validated yield, but preferentially admits lower-support, weaker-hit-rate candidates; keep cluster_count==2 guardrails and review enabled."
             )
         return (
             "Custom MIN_CLUSTER_COUNT in use; compare against the MCC=3 default before promoting any threshold change."
@@ -398,7 +398,7 @@ class K2ShortlistPeriodRunner:
         out["manual_review_required"] = cluster2_mask.astype(bool)
         out["manual_review_reason"] = ""
         out.loc[cluster2_mask, "manual_review_reason"] = (
-            f"validated_cluster_count=={review_cluster}; experimental MCC recovery candidate"
+            f"validated_cluster_count=={review_cluster}; supported high-recall mode candidate requires review"
         )
         out["cluster2_watch_very_short_period"] = (cluster2_any_mask & out["P"].le(short_period_max)).astype(bool)
         out["cluster2_watch_low_event_support"] = (cluster2_any_mask & out["n_events_after_filters"].le(low_event_max)).astype(bool)

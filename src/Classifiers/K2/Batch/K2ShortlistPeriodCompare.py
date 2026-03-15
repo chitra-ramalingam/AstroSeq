@@ -181,6 +181,29 @@ class K2ShortlistPeriodCompare:
             return pd.Series([default] * len(df), index=df.index, dtype=bool)
         return df[col].fillna(default).astype(bool)
 
+    @staticmethod
+    def _normalized_policy_mode(raw_value: Any, min_cluster_count_value: Any) -> str:
+        raw = str(raw_value).strip()
+        if raw in {
+            K2ShortlistPeriodConfig.PRECISION_FIRST_MODE_NAME,
+            K2ShortlistPeriodConfig.HIGH_RECALL_MODE_NAME,
+            "custom_threshold",
+        }:
+            return raw
+        if raw == "default_scientific":
+            return K2ShortlistPeriodConfig.PRECISION_FIRST_MODE_NAME
+        if raw == "experimental_recovery":
+            return K2ShortlistPeriodConfig.HIGH_RECALL_MODE_NAME
+        try:
+            min_cluster_count = int(float(min_cluster_count_value))
+        except Exception:
+            return raw
+        if min_cluster_count == int(K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT):
+            return K2ShortlistPeriodConfig.PRECISION_FIRST_MODE_NAME
+        if min_cluster_count == int(K2ShortlistPeriodConfig.MANUAL_REVIEW_CLUSTER_COUNT_EQ):
+            return K2ShortlistPeriodConfig.HIGH_RECALL_MODE_NAME
+        return "custom_threshold"
+
     def _annotate_cluster2_review(self, df: pd.DataFrame) -> pd.DataFrame:
         out = df.copy()
         for col in ["P", "cluster_count", "n_events_after_filters", "hit_rate_snr", "hit_rate_shape", "soft_hit_rate"]:
@@ -376,20 +399,33 @@ class K2ShortlistPeriodCompare:
         if len(baseline_diag) > 0 and len(trial_diag) > 0:
             bdiag = baseline_diag.iloc[0].to_dict()
             tdiag = trial_diag.iloc[0].to_dict()
-            for metric in [
-                "mcc_policy_mode",
-                "min_cluster_count",
-                "default_min_cluster_count",
-                "manual_review_cluster_count_eq",
-                "cluster2_guardrail_hit_rate_shape_min",
-                "cluster2_guardrail_soft_hit_rate_min",
-            ]:
+            policy_pairs = [
+                (
+                    "mcc_policy_mode",
+                    self._normalized_policy_mode(bdiag.get("mcc_policy_mode", ""), bdiag.get("min_cluster_count", "")),
+                    self._normalized_policy_mode(tdiag.get("mcc_policy_mode", ""), tdiag.get("min_cluster_count", "")),
+                ),
+                ("min_cluster_count", bdiag.get("min_cluster_count", ""), tdiag.get("min_cluster_count", "")),
+                ("default_min_cluster_count", bdiag.get("default_min_cluster_count", ""), tdiag.get("default_min_cluster_count", "")),
+                ("manual_review_cluster_count_eq", bdiag.get("manual_review_cluster_count_eq", ""), tdiag.get("manual_review_cluster_count_eq", "")),
+                (
+                    "cluster2_guardrail_hit_rate_shape_min",
+                    bdiag.get("cluster2_guardrail_hit_rate_shape_min", ""),
+                    tdiag.get("cluster2_guardrail_hit_rate_shape_min", ""),
+                ),
+                (
+                    "cluster2_guardrail_soft_hit_rate_min",
+                    bdiag.get("cluster2_guardrail_soft_hit_rate_min", ""),
+                    tdiag.get("cluster2_guardrail_soft_hit_rate_min", ""),
+                ),
+            ]
+            for metric, bval, tval in policy_pairs:
                 report_rows.append(
                     self._report_rows(
                         "policy",
                         metric,
-                        bdiag.get(metric, ""),
-                        tdiag.get(metric, ""),
+                        bval,
+                        tval,
                         "",
                     )
                 )

@@ -474,7 +474,7 @@ class TestK2ShortlistPeriodRunner(unittest.TestCase):
 
         row1 = annotated.loc[annotated["epic"] == "1"].iloc[0]
         self.assertTrue(bool(row1["manual_review_required"]))
-        self.assertIn("experimental MCC recovery candidate", str(row1["manual_review_reason"]))
+        self.assertIn("supported high-recall mode candidate requires review", str(row1["manual_review_reason"]))
         self.assertTrue(bool(row1["cluster2_watch_very_short_period"]))
         self.assertTrue(bool(row1["cluster2_watch_low_event_support"]))
         self.assertFalse(bool(row1["cluster2_guardrail_hit_rate_shape_pass"]))
@@ -541,10 +541,10 @@ class TestK2ShortlistPeriodRunner(unittest.TestCase):
         default_runner = K2ShortlistPeriodRunner(config=K2ShortlistPeriodConfig(MIN_CLUSTER_COUNT=3))
         experimental_runner = K2ShortlistPeriodRunner(config=K2ShortlistPeriodConfig(MIN_CLUSTER_COUNT=2))
 
-        self.assertEqual(default_runner._mcc_policy_mode(), "default_scientific")
-        self.assertIn("default operating point", default_runner._mcc_policy_note())
-        self.assertEqual(experimental_runner._mcc_policy_mode(), "experimental_recovery")
-        self.assertIn("experimental recovery mode", experimental_runner._mcc_policy_note())
+        self.assertEqual(default_runner._mcc_policy_mode(), "precision_first_default")
+        self.assertIn("precision-first default", default_runner._mcc_policy_note())
+        self.assertEqual(experimental_runner._mcc_policy_mode(), "supported_high_recall")
+        self.assertIn("supported high-recall mode", experimental_runner._mcc_policy_note())
 
     def test_run_cli_accepts_period_stage_n_override(self) -> None:
         with mock.patch.object(K2ShortlistPeriodRunner, "run", autospec=True, return_value={"ok": True}) as run_mock:
@@ -657,7 +657,7 @@ class TestK2ShortlistPeriodRunner(unittest.TestCase):
         baseline_funnel = pd.DataFrame([{"epic_id": "200", "terminal_reason": "no_cluster_periods", "source_reason": "candidate_filter_rejection"}])
         trial_funnel = pd.DataFrame([{"epic_id": "200", "terminal_reason": "validated", "source_reason": "validated"}])
         baseline_diag = pd.DataFrame([{
-            "mcc_policy_mode": "default_scientific",
+            "mcc_policy_mode": "precision_first_default",
             "min_cluster_count": 3,
             "default_min_cluster_count": 3,
             "manual_review_cluster_count_eq": 2,
@@ -669,7 +669,7 @@ class TestK2ShortlistPeriodRunner(unittest.TestCase):
             "n_quarantined_no_cluster_periods": 1,
         }])
         trial_diag = pd.DataFrame([{
-            "mcc_policy_mode": "experimental_recovery",
+            "mcc_policy_mode": "supported_high_recall",
             "min_cluster_count": 2,
             "default_min_cluster_count": 3,
             "manual_review_cluster_count_eq": 2,
@@ -706,8 +706,8 @@ class TestK2ShortlistPeriodRunner(unittest.TestCase):
         policy_row = report_df.loc[
             (report_df["section"] == "policy") & (report_df["metric"] == "mcc_policy_mode")
         ].iloc[0]
-        self.assertEqual(str(policy_row["baseline_value"]), "default_scientific")
-        self.assertEqual(str(policy_row["trial_value"]), "experimental_recovery")
+        self.assertEqual(str(policy_row["baseline_value"]), "precision_first_default")
+        self.assertEqual(str(policy_row["trial_value"]), "supported_high_recall")
         cluster2_review_df = pd.read_csv(out["cluster2_review_csv"])
         self.assertEqual(list(cluster2_review_df["epic"].astype(str)), ["200"])
         self.assertTrue(bool(cluster2_review_df.iloc[0]["cluster2_watch_low_event_support"]))

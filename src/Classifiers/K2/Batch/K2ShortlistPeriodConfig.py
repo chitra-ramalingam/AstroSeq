@@ -7,9 +7,9 @@ from typing import Optional, Tuple
 
 @dataclass(frozen=True)
 class K2ShortlistPeriodConfig:
-    # Experimental note: MCC=2 increases validated yield, but preferentially admits
-    # lower-support, weaker-hit-rate candidates, so it remains a recovery mode rather
-    # than the default operating point.
+    # Operating modes:
+    # - MIN_CLUSTER_COUNT=3: precision-first default
+    # - MIN_CLUSTER_COUNT=2: supported high-recall mode with cluster_count==2 review/guardrails
     RAW_EPIC_LIST_CSV: str = r"plots\k2_batch\batch_results_whiteness.csv"
     RAW_EPIC_QUERY_COL: str = "query"
     SHORTLIST_CSV: str = r"plots\k2_batch\shortlist_top_shape_for_period.csv"
@@ -53,6 +53,8 @@ class K2ShortlistPeriodConfig:
         "events_filtered_to_zero",
     )
     MIN_CLUSTER_COUNT: int = 3
+    PRECISION_FIRST_MODE_NAME: str = "precision_first_default"
+    HIGH_RECALL_MODE_NAME: str = "supported_high_recall"
     MANUAL_REVIEW_CLUSTER_COUNT_EQ: int = 2
     CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE: Optional[float] = 0.10
     CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE: Optional[float] = 0.10
