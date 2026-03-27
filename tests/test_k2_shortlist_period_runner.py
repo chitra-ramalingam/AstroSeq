@@ -558,6 +558,25 @@ class TestK2ShortlistPeriodRunner(unittest.TestCase):
         self.assertEqual(int(runner_self.config.PERIOD_STAGE_N), 2000)
         self.assertEqual(str(runner_self.config.RUN_ID), "cli_override_test")
 
+    def test_run_cli_accepts_raw_epic_and_epics_dir_overrides(self) -> None:
+        with mock.patch.object(K2ShortlistPeriodRunner, "run", autospec=True, return_value={"ok": True}) as run_mock:
+            out = K2ShortlistPeriodRunner.run_cli(
+                [
+                    "--raw-epic-list-csv",
+                    r"plots\custom\batch_results_whiteness.csv",
+                    "--epics-dir",
+                    r"plots\custom\epics",
+                    "--out-dir",
+                    r"plots\custom\shortlist",
+                ]
+            )
+
+        self.assertEqual(out, {"ok": True})
+        runner_self = run_mock.call_args.args[0]
+        self.assertEqual(str(runner_self.config.RAW_EPIC_LIST_CSV), r"plots\custom\batch_results_whiteness.csv")
+        self.assertEqual(str(runner_self.config.EPICS_DIR), r"plots\custom\epics")
+        self.assertEqual(str(runner_self.config.OUT_DIR), r"plots\custom\shortlist")
+
     def test_compare_report_marks_validation_capable_runs(self) -> None:
         case_dir = self._make_case_dir()
         baseline_dir = case_dir / "baseline"

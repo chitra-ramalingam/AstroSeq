@@ -10,6 +10,7 @@ class K2ShortlistPeriodConfig:
     # Operating modes:
     # - MIN_CLUSTER_COUNT=3: precision-first default
     # - MIN_CLUSTER_COUNT=2: supported high-recall mode with cluster_count==2 review/guardrails
+    # - MIN_CLUSTER_COUNT=2 + relaxed cluster2 guardrails: threshold-relaxed experiment
     RAW_EPIC_LIST_CSV: str = r"plots\k2_batch\batch_results_whiteness.csv"
     RAW_EPIC_QUERY_COL: str = "query"
     SHORTLIST_CSV: str = r"plots\k2_batch\shortlist_top_shape_for_period.csv"
@@ -53,11 +54,16 @@ class K2ShortlistPeriodConfig:
         "events_filtered_to_zero",
     )
     MIN_CLUSTER_COUNT: int = 3
+    OPERATING_MODE: Optional[str] = None
     PRECISION_FIRST_MODE_NAME: str = "precision_first_default"
     HIGH_RECALL_MODE_NAME: str = "supported_high_recall"
+    THRESHOLD_RELAXED_MODE_NAME: str = "supported_high_recall_threshold_relaxed"
+    DETECTOR_HIGH_RECALL_EXPERIMENTAL_MODE_NAME: str = "detector_high_recall_experimental"
     MANUAL_REVIEW_CLUSTER_COUNT_EQ: int = 2
     CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE: Optional[float] = 0.10
     CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE: Optional[float] = 0.10
+    THRESHOLD_RELAXED_CLUSTER2_MIN_HIT_RATE_SHAPE: Optional[float] = 0.05
+    THRESHOLD_RELAXED_CLUSTER2_MIN_SOFT_HIT_RATE: Optional[float] = 0.05
     CLUSTER2_REVIEW_VERY_SHORT_PERIOD_DAYS_MAX: float = 1.0
     CLUSTER2_REVIEW_LOW_EVENT_SUPPORT_MAX: int = 2
     CLUSTER2_REVIEW_NEAR_ZERO_HIT_RATE_SHAPE_MAX: float = 0.05

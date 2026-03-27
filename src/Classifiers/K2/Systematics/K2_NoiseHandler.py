@@ -208,6 +208,56 @@ class K2_NoiseHandler:
         """
         author = ""
         campaign = ""
+        direct_local = self._find_direct_local_product(query=query, download_dir=download_dir, exptime=exptime)
+        if direct_local is not None:
+            path = str(direct_local["cache_path"])
+            print(
+                f"[select local] EPIC {direct_local['epic']} "
+                f"author={direct_local['author']} mission=K2 campaign={direct_local['campaign']}"
+            )
+            print(f"[lc path] EPIC {direct_local['epic']} -> {path}")
+            print(f"[cache source] source={self._cache_source_from_path(path)}")
+            try:
+                lc = lk.read(direct_local["cache_path"])
+            except Exception as e:
+                raise K2PipelineStageError(
+                    stage="load",
+                    exc=e,
+                    author_selected=str(direct_local["author"]),
+                    campaign_selected=str(direct_local["campaign"]),
+                )
+            return {
+                "status": "ok",
+                "lc": lc,
+                "author": str(direct_local["author"]),
+                "author_selected": str(direct_local["author"]),
+                "campaign_selected": str(direct_local["campaign"]),
+                "search_result": dict(direct_local["search_result"]),
+                "cache_path": path,
+                "cache_source": self._cache_source_from_path(path),
+            }
+        if cache_only:
+            epic = self._infer_epic_id(query=query, selected_row=None)
+            print(f"[lc path] EPIC {epic} -> None")
+            print(f"[lc path] EPIC {epic} -> no direct local cached file; skipping search because cache_only=True")
+            print("[cache source] source=local_direct_cache_miss")
+            return {
+                "status": "cache_miss",
+                "lc": None,
+                "author": "",
+                "author_selected": "",
+                "campaign_selected": "",
+                "search_result": {
+                    "query": str(query),
+                    "selected_index": -1,
+                    "selection_reason": "direct_local_cache_miss_no_search",
+                    "n_results": 0,
+                    "author_priority": [str(a) for a in self.author_priority],
+                    "results": [],
+                },
+                "cache_path": None,
+                "cache_source": "local_direct_cache_miss",
+            }
         try:
             sr = lk.search_lightcurve(
                 query,
@@ -1009,6 +1059,128 @@ class K2_NoiseHandler:
             except Exception:
                 continue
         return None
+
+    def _find_direct_local_product(
+        self,
+        query: str,
+        download_dir: Optional[str],
+        exptime: Optional[Union[str, float]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        epic = self._infer_epic_id(query=query, selected_row=None).strip()
+        if epic == "":
+            return None
+
+        roots = self._cache_roots(download_dir=download_dir)
+        candidates = self._direct_local_candidate_paths(epic=epic, download_dir=download_dir, exptime=exptime)
+        if len(candidates) == 0:
+            return None
+
+        ranked = sorted(candidates, key=lambda path: self._direct_local_candidate_sort_key(path, roots))
+        best_path = ranked[0]
+        author = self._direct_local_author(best_path)
+        campaign = self._direct_local_campaign(best_path)
+        return {
+            "epic": epic,
+            "author": author,
+            "campaign": campaign,
+            "cache_path": best_path,
+            "search_result": {
+                "query": str(query),
+                "selected_index": -1,
+                "selection_reason": "direct_local_cache_lookup",
+                "n_results": int(len(ranked)),
+                "author_priority": [str(a) for a in self.author_priority],
+                "results": [
+                    {
+                        "author": self._direct_local_author(path),
+                        "campaign": self._direct_local_campaign(path),
+                        "path": str(path),
+                    }
+                    for path in ranked[:20]
+                ],
+            },
+        }
+
+    def _direct_local_candidate_paths(
+        self,
+        epic: str,
+        download_dir: Optional[str],
+        exptime: Optional[Union[str, float]] = None,
+    ) -> List[Path]:
+        del exptime
+        roots = self._cache_roots(download_dir=download_dir)
+        patterns = [
+            f"mastDownload/HLSP/*{epic}*/*.fits*",
+            f"mastDownload/*/*{epic}*/*.fits*",
+            f"*{epic}*/*.fits*",
+            f"**/*{epic}*.fits*",
+        ]
+        matches: List[Path] = []
+        seen = set()
+        for root in roots:
+            for pat in patterns:
+                try:
+                    for match in root.glob(pat):
+                        if (not match.exists()) or (not match.is_file()):
+                            continue
+                        text = str(match).lower()
+                        if ("k2" not in text) and ("ktwo" not in text):
+                            continue
+                        key = str(match).lower()
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        matches.append(match)
+                except Exception:
+                    continue
+        return matches
+
+    def _direct_local_candidate_sort_key(self, path: Path, roots: List[Path]) -> Tuple[int, int, int, str]:
+        author = self._direct_local_author(path)
+        try:
+            author_rank = list(self.author_priority).index(author)
+        except ValueError:
+            author_rank = len(self.author_priority)
+        campaign_rank = self._direct_local_campaign_sort_key(path)
+        root_rank = self._direct_local_root_rank(path=path, roots=roots)
+        return (author_rank, root_rank, campaign_rank, str(path).lower())
+
+    @staticmethod
+    def _direct_local_root_rank(path: Path, roots: List[Path]) -> int:
+        path_text = str(path).lower()
+        for idx, root in enumerate(roots):
+            root_text = str(root).lower()
+            if path_text.startswith(root_text):
+                return int(idx)
+        return int(len(roots) + 1)
+
+    @staticmethod
+    def _direct_local_campaign(path: Path) -> str:
+        text = str(path).lower()
+        m = re.search(r"-c(\d{2,3})(?:[^0-9]|$)", text)
+        if m is not None:
+            return f"c{m.group(1)}"
+        m = re.search(r"(?:^|[^a-z0-9])c(\d{2,3})(?:[^0-9]|$)", text)
+        if m is not None:
+            return f"c{m.group(1)}"
+        return ""
+
+    def _direct_local_campaign_sort_key(self, path: Path) -> int:
+        campaign = self._direct_local_campaign(path)
+        m = re.search(r"c(\d{2,3})", campaign.lower())
+        if m is None:
+            return 10_000
+        try:
+            return int(m.group(1))
+        except Exception:
+            return 10_000
+
+    def _direct_local_author(self, path: Path) -> str:
+        text = str(path).upper()
+        for author in self.author_priority:
+            if str(author).upper() in text:
+                return str(author)
+        return "K2"
 
     def _serialize_search_result(
         self,

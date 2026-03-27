@@ -13,6 +13,7 @@ import pandas as pd
 
 from src.Classifiers.K2.K2_TimeDomainTransitPipeline import (
     K2TimeDomainTransitPipeline,
+    K2TimeDomainRankConfig,
     infer_periods_from_events,
 )
 from src.Classifiers.K2.Systematics.K2NoiseLoader import (
@@ -24,6 +25,27 @@ from src.Classifiers.K2.Systematics.K2_PeriodValidator import K2PeriodValidator
 
 
 class K2BatchRunner:
+    DEFAULT_DETECTOR_OPERATING_MODE = "detector_default"
+    DETECTOR_HIGH_RECALL_EXPERIMENTAL_MODE = "detector_high_recall_experimental"
+    DETECTOR_HIGH_RECALL_QUALITY_GATED_EXPERIMENTAL_MODE = "detector_high_recall_quality_gated_experimental"
+    DETECTOR_HIGH_RECALL_EXPERIMENTAL_DETECT_SIGMA = 2.25
+    DETECTOR_QUALITY_GATE_MIN_SHAPE_SCORE = 0.65
+    DETECTOR_QUALITY_GATE_MIN_DEPTH_SNR = 3.0
+    DETECTOR_CANDIDATE_RESULTS_COLUMNS = [
+        "query",
+        "epic_id",
+        "detector_operating_mode",
+        "detector_detect_sigma",
+        "triage_status",
+        "triage_usable",
+        "triage_why_not_usable",
+        "n_events",
+        "best_shape_score",
+        "best_depth_snr",
+        "n_points_after_preprocess",
+        "cache_only",
+    ]
+
     def __init__(
         self,
         out_dir: Union[str, Path],
@@ -51,6 +73,9 @@ class K2BatchRunner:
         whiteness_score_definition: str = "pvalue",
         noisy_whiteness_threshold: Optional[float] = None,
         noisy_step_threshold: Optional[float] = None,
+        detector_operating_mode: str = DEFAULT_DETECTOR_OPERATING_MODE,
+        detector_detect_sigma: Optional[float] = None,
+        detector_only_analysis: bool = False,
         resume: bool = False,
         skip_existing_epics: bool = True,
         cache_only: bool = False,
@@ -75,6 +100,12 @@ class K2BatchRunner:
         self.periodic_shape_threshold = float(periodic_shape_threshold)
         self.periodic_hit_rate_shape_threshold = float(periodic_hit_rate_shape_threshold)
         self.periodic_coverage_threshold = float(periodic_coverage_threshold)
+        self.detector_operating_mode = self._normalize_detector_operating_mode(detector_operating_mode)
+        self.detector_detect_sigma = self._resolve_detector_detect_sigma(
+            mode=self.detector_operating_mode,
+            detector_detect_sigma=detector_detect_sigma,
+        )
+        self.detector_only_analysis = bool(detector_only_analysis)
 
         logging.getLogger("lightkurve").setLevel(logging.WARNING)
 
@@ -92,7 +123,8 @@ class K2BatchRunner:
             whiteness_score_definition=whiteness_score_definition,
         )
         self.noise_loader = K2NoiseLoader(loader_config=self.loader_config, noise_config=self.noise_config)
-        self.detector = K2TimeDomainTransitPipeline(loader=self.noise_loader)
+        self.detector = self._build_detector(detect_sigma=float(self.detector_detect_sigma))
+        self._default_detector: Optional[K2TimeDomainTransitPipeline] = None
         self.validator = K2PeriodValidator(
             detector=self.detector,
             tol_days=float(validator_tol_days),
@@ -124,6 +156,49 @@ class K2BatchRunner:
         )
         self._whiteness_debug_limit = 20
         self._whiteness_debug_printed = 0
+
+    @classmethod
+    def detector_operating_mode_choices(cls) -> List[str]:
+        return [
+            str(cls.DEFAULT_DETECTOR_OPERATING_MODE),
+            str(cls.DETECTOR_HIGH_RECALL_EXPERIMENTAL_MODE),
+            str(cls.DETECTOR_HIGH_RECALL_QUALITY_GATED_EXPERIMENTAL_MODE),
+        ]
+
+    @classmethod
+    def _normalize_detector_operating_mode(cls, mode: str) -> str:
+        resolved = str(mode or cls.DEFAULT_DETECTOR_OPERATING_MODE).strip()
+        if resolved not in cls.detector_operating_mode_choices():
+            raise ValueError(
+                f"Unsupported detector operating mode {mode!r}; expected one of {cls.detector_operating_mode_choices()}."
+            )
+        return resolved
+
+    @classmethod
+    def _resolve_detector_detect_sigma(
+        cls,
+        mode: str,
+        detector_detect_sigma: Optional[float],
+    ) -> float:
+        if detector_detect_sigma is not None:
+            return float(detector_detect_sigma)
+        if str(mode) in {
+            str(cls.DETECTOR_HIGH_RECALL_EXPERIMENTAL_MODE),
+            str(cls.DETECTOR_HIGH_RECALL_QUALITY_GATED_EXPERIMENTAL_MODE),
+        }:
+            return float(cls.DETECTOR_HIGH_RECALL_EXPERIMENTAL_DETECT_SIGMA)
+        return float(K2TimeDomainRankConfig.detect_sigma)
+
+    def _build_detector(self, detect_sigma: float) -> K2TimeDomainTransitPipeline:
+        return K2TimeDomainTransitPipeline(
+            loader=self.noise_loader,
+            rank_config=K2TimeDomainRankConfig(detect_sigma=float(detect_sigma)),
+        )
+
+    def _get_default_detector(self) -> K2TimeDomainTransitPipeline:
+        if self._default_detector is None:
+            self._default_detector = self._build_detector(detect_sigma=float(K2TimeDomainRankConfig.detect_sigma))
+        return self._default_detector
 
     @staticmethod
     def _as_float(value: Any, default: float = float("nan")) -> float:
@@ -249,15 +324,107 @@ class K2BatchRunner:
         self._whiteness_debug_printed += 1
 
     @staticmethod
+    def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
+        if column in df.columns:
+            return pd.to_numeric(df[column], errors="coerce")
+        return pd.Series([np.nan] * len(df), index=df.index, dtype=float)
+
+    @staticmethod
     def _best_event_metrics(events_df: pd.DataFrame) -> Tuple[float, float]:
         if len(events_df) == 0:
             return float("nan"), float("nan")
-        shape = pd.to_numeric(events_df.get("shape_score", np.nan), errors="coerce")
-        snr = pd.to_numeric(events_df.get("depth_snr", np.nan), errors="coerce")
+        shape = K2BatchRunner._numeric_series(events_df, "shape_score")
+        snr = K2BatchRunner._numeric_series(events_df, "depth_snr")
         return (
             float(shape.max()) if shape.notna().any() else float("nan"),
             float(snr.max()) if snr.notna().any() else float("nan"),
         )
+
+    @staticmethod
+    def _event_identity(row: pd.Series) -> str:
+        t_mid = pd.to_numeric(pd.Series([row.get("t_mid", np.nan)]), errors="coerce").iloc[0]
+        if np.isfinite(t_mid):
+            return f"t_mid:{float(t_mid):.12f}"
+        min_idx = str(row.get("min_idx", ""))
+        start_idx = str(row.get("start_idx", ""))
+        end_idx = str(row.get("end_idx", ""))
+        return f"idx:{min_idx}:{start_idx}:{end_idx}"
+
+    def _apply_quality_gate_to_added_events(
+        self,
+        baseline_events_df: pd.DataFrame,
+        experimental_events_df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        baseline = baseline_events_df.copy()
+        experimental = experimental_events_df.copy()
+        if len(experimental) == 0:
+            return experimental
+        if len(baseline) == 0:
+            baseline_keys: set = set()
+        else:
+            baseline_keys = {
+                self._event_identity(row)
+                for _, row in baseline.iterrows()
+            }
+        if len(baseline_keys) == 0:
+            added_mask = pd.Series([True] * len(experimental), index=experimental.index)
+        else:
+            added_mask = experimental.apply(lambda row: self._event_identity(row) not in baseline_keys, axis=1)
+        added_events = experimental.loc[added_mask].copy()
+        if len(added_events) > 0:
+            shape = pd.to_numeric(added_events.get("shape_score", np.nan), errors="coerce")
+            snr = pd.to_numeric(added_events.get("depth_snr", np.nan), errors="coerce")
+            added_events = added_events.loc[
+                shape.ge(float(self.DETECTOR_QUALITY_GATE_MIN_SHAPE_SCORE))
+                & snr.ge(float(self.DETECTOR_QUALITY_GATE_MIN_DEPTH_SNR))
+            ].copy()
+        merged = pd.concat([baseline, added_events], ignore_index=True)
+        if len(merged) == 0:
+            return merged
+        merged["shape_score"] = pd.to_numeric(merged.get("shape_score", np.nan), errors="coerce")
+        merged["depth_snr"] = pd.to_numeric(merged.get("depth_snr", np.nan), errors="coerce")
+        merged = merged.sort_values(
+            ["shape_score", "depth_snr", "t_mid"],
+            ascending=[False, False, True],
+            kind="mergesort",
+        ).reset_index(drop=True)
+        return merged
+
+    def _run_detector_for_query(self, query: str) -> Dict[str, Any]:
+        experimental = self.detector.run_one(
+            query=query,
+            limit=self.limit,
+            exptime=self.exptime,
+            cache_only=self.cache_only,
+        )
+        if self.detector_operating_mode != self.DETECTOR_HIGH_RECALL_QUALITY_GATED_EXPERIMENTAL_MODE:
+            return experimental
+
+        baseline = self._get_default_detector().run_one(
+            query=query,
+            limit=self.limit,
+            exptime=self.exptime,
+            cache_only=self.cache_only,
+        )
+        baseline_events_df = pd.DataFrame(baseline.get("candidates", []))
+        experimental_events_df = pd.DataFrame(experimental.get("candidates", []))
+        merged_events_df = self._apply_quality_gate_to_added_events(
+            baseline_events_df=baseline_events_df,
+            experimental_events_df=experimental_events_df,
+        )
+        summary = dict(experimental.get("summary", {}))
+        if (str(summary.get("status", "")).strip().lower() != "ok") and (
+            str(baseline.get("summary", {}).get("status", "")).strip().lower() == "ok"
+        ):
+            summary = dict(baseline.get("summary", {}))
+        best_shape, _ = self._best_event_metrics(merged_events_df)
+        shape = self._numeric_series(merged_events_df, "shape_score")
+        mean_shape = float(shape.mean()) if shape.notna().any() else float("nan")
+        summary["n_candidates"] = int(len(merged_events_df))
+        summary["best_shape_score"] = float(best_shape)
+        summary["mean_shape_score"] = float(mean_shape)
+        summary["shape_rank_method"] = "time_domain"
+        return {"summary": summary, "candidates": merged_events_df.to_dict(orient="records")}
 
     def _phase_cluster_score_quiet(self, events_df: pd.DataFrame, period: float) -> Tuple[int, float, List[Any]]:
         if "t_mid" not in events_df.columns or (not np.isfinite(period)) or period <= 0:
@@ -763,12 +930,30 @@ class K2BatchRunner:
         print(f"[batch schema] Added columns to existing batch_results.csv: {missing}")
         return list(df.columns)
 
+    @classmethod
+    def _detector_candidate_result_row(cls, row: Dict[str, Any]) -> Dict[str, Any]:
+        slim: Dict[str, Any] = {}
+        for col in cls.DETECTOR_CANDIDATE_RESULTS_COLUMNS:
+            slim[col] = row.get(col, np.nan)
+        return slim
+
+    def _write_detector_candidate_results(self, rows: Sequence[Dict[str, Any]]) -> Path:
+        out_csv = self.out_dir / "detector_candidate_results.csv"
+        records = [self._detector_candidate_result_row(row) for row in rows]
+        df = pd.DataFrame(records, columns=self.DETECTOR_CANDIDATE_RESULTS_COLUMNS)
+        df.to_csv(out_csv, index=False)
+        return out_csv
+
     def run(self) -> Dict[str, Any]:
         queries = self._load_queries()
         if len(queries) == 0:
             raise ValueError("No queries to run")
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.epics_dir.mkdir(parents=True, exist_ok=True)
+        print(
+            f"[K2BatchRunner] detector_operating_mode={self.detector_operating_mode} "
+            f"detect_sigma={self.detector_detect_sigma:.3f}"
+        )
 
         batch_csv = self.out_dir / "batch_results.csv"
 
@@ -820,6 +1005,8 @@ class K2BatchRunner:
                 "query": str(query),
                 "epic_id": slug,
                 "epic_dir": str(epic_dir),
+                "detector_operating_mode": str(self.detector_operating_mode),
+                "detector_detect_sigma": float(self.detector_detect_sigma),
                 "triage_status": "error",
                 "triage_usable": False,
                 "triage_score_global": float("nan"),
@@ -828,11 +1015,13 @@ class K2BatchRunner:
                 "triage_whiteness_score": float("nan"),
                 "triage_whiteness_definition": "",
                 "triage_why_not_usable": "",
+                "n_points_after_preprocess": 0,
                 "error_stage": "",
                 "error_type": "",
                 "error_msg": "",
                 "author_selected": "",
                 "campaign_selected": "",
+                "cache_only": bool(self.cache_only),
                 "n_events": 0,
                 "best_shape_score": float("nan"),
                 "best_depth_snr": float("nan"),
@@ -861,12 +1050,7 @@ class K2BatchRunner:
             current_error_stage = "detect"
 
             try:
-                det = self.detector.run_one(
-                    query=query,
-                    limit=self.limit,
-                    exptime=self.exptime,
-                    cache_only=self.cache_only,
-                )
+                det = self._run_detector_for_query(query=query)
                 triage = dict(det.get("summary", {}))
                 events_df = pd.DataFrame(det.get("candidates", []))
                 events_df.to_csv(row["events_csv"], index=False)
@@ -882,6 +1066,9 @@ class K2BatchRunner:
                         "triage_whiteness_score": self._as_float(triage.get("whiteness_score", float("nan"))),
                         "triage_whiteness_definition": str(triage.get("whiteness_definition", "")),
                         "triage_why_not_usable": str(triage.get("why_not_usable", "")),
+                        "n_points_after_preprocess": int(
+                            self._as_float(triage.get("n_points_after_preprocess", 0.0), default=0.0)
+                        ),
                         "error_stage": str(triage.get("error_stage", "")),
                         "error_type": str(triage.get("error_type", "")),
                         "error_msg": str(triage.get("error_msg", ""))[:200],
@@ -901,7 +1088,16 @@ class K2BatchRunner:
                 self._debug_whiteness_gate(query=query, triage=triage)
 
                 hard_reasons = self._hard_fail_reasons(triage)
-                if len(hard_reasons) == 0 and len(events_df) > 0:
+                if self.detector_only_analysis:
+                    if len(events_df) > 0:
+                        print(
+                            f"[detector-only] recorded n_events={len(events_df)} "
+                            "and skipped period validation/shortlist recovery"
+                        )
+                    else:
+                        print("[detector-only] no events detected; recorded detector outcome only")
+                    hard_reasons = []
+                elif len(hard_reasons) == 0 and len(events_df) > 0:
                     current_error_stage = "period"
                     t, f = self._fetch_clean_time_flux(query=query)
                     proposals = self._propose_periods(events_df)
@@ -1004,6 +1200,17 @@ class K2BatchRunner:
             if (completed % 50 == 0) or (idx == (len(queries) - 1)):
                 self._write_progress(last_completed_index=idx, last_completed_query=query)
 
+        detector_candidate_results_csv: Optional[Path] = None
+        if self.detector_only_analysis:
+            detector_candidate_results_csv = self._write_detector_candidate_results(rows=rows)
+            print(f"\n[K2BatchRunner] Wrote: {detector_candidate_results_csv}")
+            return {
+                "out_dir": self.out_dir,
+                "batch_results_csv": batch_csv,
+                "detector_candidate_results_csv": detector_candidate_results_csv,
+                "results_df": pd.DataFrame(rows),
+            }
+
         rebuilt = self.rebuild_leaderboards(batch_csv=batch_csv)
         results_df = rebuilt["results_df"]
         self._print_finalize_summary(results_df=results_df)
@@ -1042,6 +1249,11 @@ def _build_cli_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise-mode", default="strict", choices=["strict", "discovery"], help="Noise triage mode.")
     p.add_argument("--resume", action="store_true", help="Resume from out_dir/progress.json if present.")
     p.add_argument("--cache-only", action="store_true", help="Process using local cache only; never download missing products.")
+    p.add_argument(
+        "--detector-only-analysis",
+        action="store_true",
+        help="Record detector candidate outcomes only; skip period validation and shortlist recovery.",
+    )
     return p
 
 
@@ -1058,6 +1270,7 @@ def main() -> None:
         limit=args.limit,
         exptime=args.exptime,
         resume=args.resume,
+        detector_only_analysis=args.detector_only_analysis,
         cache_only=args.cache_only,
     )
     if args.rebuild_leaderboards:
@@ -1073,7 +1286,9 @@ def main() -> None:
         print(f"[K2BatchRunner] Wrote: {out['leaderboard_top_shape_csv']}")
         print(f"[K2BatchRunner] Wrote: {out['leaderboard_top_snr_csv']}")
         return
-    runner.run()
+    out = runner.run()
+    if args.detector_only_analysis:
+        print(f"[K2BatchRunner] Wrote: {out['detector_candidate_results_csv']}")
 
 
 if __name__ == "__main__":

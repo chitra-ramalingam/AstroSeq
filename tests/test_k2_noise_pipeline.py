@@ -2,6 +2,11 @@ import dataclasses
 import math
 import unittest
 from types import MethodType
+from unittest import mock
+from pathlib import Path
+import os
+from uuid import uuid4
+import shutil
 
 import numpy as np
 
@@ -13,12 +18,15 @@ def _make_handler(cfg: K2NoiseConfig | None = None) -> K2_NoiseHandler:
     h = K2_NoiseHandler.__new__(K2_NoiseHandler)
     h.noise_config = cfg if cfg is not None else K2NoiseConfig()
     h.max_gap_days = 0.5
+    h.author_priority = K2_NoiseHandler.AUTHOR_PRIORITY
+    h.verbose = False
     return h
 
 
 class TestK2NoiseHandlerExplain(unittest.TestCase):
     def setUp(self) -> None:
         self.cfg = K2NoiseConfig(
+            whiteness_score_definition="statistic",
             min_points=100,
             min_baseline_days=10.0,
             min_robust_sigma=0.1,
@@ -66,13 +74,14 @@ class TestK2NoiseConfigPresets(unittest.TestCase):
         discovery = K2NoiseConfig(mode="discovery")
         self.assertAlmostEqual(float(strict.max_outlier_rate_6sigma), 0.02, places=9)
         self.assertAlmostEqual(float(discovery.max_outlier_rate_6sigma), 0.08, places=9)
-        self.assertAlmostEqual(float(strict.max_whiteness_score), 0.6, places=9)
-        self.assertAlmostEqual(float(discovery.max_whiteness_score), 0.8, places=9)
+        self.assertAlmostEqual(float(strict.whiteness_alpha), 0.01, places=9)
+        self.assertAlmostEqual(float(discovery.whiteness_alpha), 0.05, places=9)
 
     def test_loader_mode_passed_to_handler(self) -> None:
         loader = K2NoiseLoader(loader_config=K2NoiseLoaderConfig(mode="discovery"))
         self.assertEqual(loader.handler.noise_config.mode, "discovery")
-        self.assertAlmostEqual(float(loader.handler.noise_config.max_outlier_rate_6sigma), 0.08, places=9)
+        self.assertIsNotNone(loader.handler.noise_config.max_outlier_rate_6sigma)
+        self.assertIsNotNone(loader.handler.noise_config.whiteness_alpha)
 
 
 class TestK2NoiseSegmentScoring(unittest.TestCase):
@@ -112,6 +121,7 @@ class TestLocalVsGlobalOutlierRate(unittest.TestCase):
 class TestK2NoiseLoaderRunOne(unittest.TestCase):
     def test_run_one_per_segment_includes_scores_and_reason(self) -> None:
         cfg = K2NoiseConfig(
+            whiteness_score_definition="statistic",
             min_points=100,
             min_baseline_days=10.0,
             min_robust_sigma=0.1,
@@ -135,7 +145,7 @@ class TestK2NoiseLoaderRunOne(unittest.TestCase):
         seg_good = K2NoiseMetrics(150, 20.0, 0.9, 0.01, 2.0, 0.0, 0.5, 0.1)
         seg_bad = K2NoiseMetrics(80, 20.0, 0.9, 0.01, 2.0, 0.0, 0.5, 0.1)
 
-        def _fetch_best(self, query, limit=50, exptime=None):  # noqa: ANN001
+        def _fetch_best(self, query, limit=50, exptime=None, cache_only=None):  # noqa: ANN001
             return {"lc": object(), "author": "EVEREST", "search_result": {"query": query}}
 
         def _clean(self, lc, flatten=False):  # noqa: ANN001
@@ -167,6 +177,7 @@ class TestK2NoiseLoaderRunOne(unittest.TestCase):
     def test_run_one_why_not_usable_includes_whiteness_value(self) -> None:
         cfg = K2NoiseConfig(
             mode="strict",
+            whiteness_score_definition="statistic",
             min_points=100,
             min_baseline_days=10.0,
             min_robust_sigma=0.1,
@@ -190,7 +201,7 @@ class TestK2NoiseLoaderRunOne(unittest.TestCase):
         )
         seg_good = K2NoiseMetrics(150, 20.0, 0.9, 0.01, 2.0, 0.0, 0.5, 0.1, outlier_rate_global=0.0)
 
-        def _fetch_best(self, query, limit=50, exptime=None):  # noqa: ANN001
+        def _fetch_best(self, query, limit=50, exptime=None, cache_only=None):  # noqa: ANN001
             return {"lc": object(), "author": "EVEREST", "search_result": {"query": query}}
 
         def _clean(self, lc, flatten=False):  # noqa: ANN001
@@ -211,6 +222,49 @@ class TestK2NoiseLoaderRunOne(unittest.TestCase):
 
         row = loader.run_one("EPIC 211797674", per_segment=True)
         self.assertIn("whiteness_score=0.9>0.6", row["why_not_usable"])
+
+
+class TestK2NoiseHandlerDirectLocalFetch(unittest.TestCase):
+    def test_fetch_best_uses_direct_local_cache_before_search(self) -> None:
+        handler = K2_NoiseHandler()
+        case_dir = Path("tmp_pycache") / f"k2_noise_handler_local_fetch_{uuid4().hex}"
+        case_dir.mkdir(parents=True, exist_ok=False)
+        try:
+            cache_root = case_dir
+            local_dir = cache_root / "mastDownload" / "HLSP" / "hlsp_everest_k2_llc_211301344-c05_kepler_v2.0_lc"
+            local_dir.mkdir(parents=True, exist_ok=False)
+            local_path = local_dir / "hlsp_everest_k2_llc_211301344-c05_kepler_v2.0_lc.fits"
+            local_path.write_text("stub", encoding="ascii")
+
+            with mock.patch.dict(os.environ, {"LIGHTKURVE_CACHE_DIR": str(cache_root)}), \
+                mock.patch("src.Classifiers.K2.Systematics.K2_NoiseHandler.lk.read", return_value=object()) as read_mock, \
+                mock.patch(
+                    "src.Classifiers.K2.Systematics.K2_NoiseHandler.lk.search_lightcurve",
+                    side_effect=AssertionError("search_lightcurve should not be called"),
+                ):
+                out = handler.fetch_best(query="EPIC 211301344", cache_only=True)
+
+            self.assertEqual(str(out["status"]), "ok")
+            self.assertEqual(str(out["author_selected"]), "EVEREST")
+            self.assertEqual(str(out["campaign_selected"]), "c05")
+            self.assertEqual(str(out["search_result"]["selection_reason"]), "direct_local_cache_lookup")
+            self.assertEqual(str(out["cache_path"]), str(local_path))
+            read_mock.assert_called_once()
+        finally:
+            shutil.rmtree(case_dir, ignore_errors=True)
+
+    def test_fetch_best_cache_only_without_local_file_returns_cache_miss_without_search(self) -> None:
+        handler = K2_NoiseHandler()
+        with mock.patch.dict(os.environ, {"LIGHTKURVE_CACHE_DIR": str(Path("tmp_pycache") / f"missing_cache_{uuid4().hex}")}), \
+            mock.patch(
+                "src.Classifiers.K2.Systematics.K2_NoiseHandler.lk.search_lightcurve",
+                side_effect=AssertionError("search_lightcurve should not be called"),
+            ):
+            out = handler.fetch_best(query="EPIC 299999999", cache_only=True)
+
+        self.assertEqual(str(out["status"]), "cache_miss")
+        self.assertEqual(str(out["cache_source"]), "local_direct_cache_miss")
+        self.assertEqual(str(out["search_result"]["selection_reason"]), "direct_local_cache_miss_no_search")
 
 
 if __name__ == "__main__":

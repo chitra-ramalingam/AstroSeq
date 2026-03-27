@@ -7,6 +7,9 @@ from src.Classifiers.K2.Pipeline.K2PosthocRetriage import K2PosthocRetriage
 from src.Classifiers.K2.Pipeline.K2WhitenessRunner import K2WhitenessRunner
 from src.Classifiers.K2.Batch.K2ShortlistPeriodRunner import K2ShortlistPeriodRunner
 from src.Classifiers.K2.Batch.K2ShortlistPeriodCompare import K2ShortlistPeriodCompare
+from src.Classifiers.K2.Batch.K2ShortlistRecoveryModeAnalysis import K2ShortlistRecoveryModeAnalysis
+from src.Classifiers.K2.Batch.K2ShortlistDetectorModeAnalysis import K2ShortlistDetectorModeAnalysis
+from src.Classifiers.K2.Batch.K2DetectorQualityGatedComparison import K2DetectorQualityGatedComparison
 from src.Classifiers.CnnModel import CnnModel
 from src.Classifiers.LargeWindow.LargeWindow_Processor import LargeWindowCnnModel
 
@@ -122,6 +125,105 @@ def main():
         print(f"report_json: {out['report_json']}")
         print(f"candidate_rescued_unique_epics: {out['candidate_rescued_unique_epics']}")
         print(f"validated_rescued_unique_epics: {out['validated_rescued_unique_epics']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_shortlist_recovery_mode_analysis":
+        out = K2ShortlistRecoveryModeAnalysis.run_cli(argv=argv[1:])
+        print(f"post_mcc_remaining_failures_by_reason.csv: {out['post_mcc_remaining_failures_by_reason_csv']}")
+        print(f"post_mcc_remaining_failures_by_period_bin.csv: {out['post_mcc_remaining_failures_by_period_bin_csv']}")
+        print(f"recovery_mode_comparison.csv: {out['recovery_mode_comparison_csv']}")
+        print(f"rescued_by_mode.csv: {out['rescued_by_mode_csv']}")
+        print(f"post_mcc_no_p_available_whiteness_diagnostics.csv: {out['post_mcc_no_p_available_whiteness_diagnostics_csv']}")
+        print(f"no_p_available_upstream_blocker_summary.csv: {out['no_p_available_upstream_blocker_summary_csv']}")
+        print(f"no_p_available_upstream_blocker_by_period_bin.csv: {out['no_p_available_upstream_blocker_by_period_bin_csv']}")
+        print(f"no_upstream_events_detected_diagnostics.csv: {out['no_upstream_events_detected_diagnostics_csv']}")
+        print(f"too_few_events_remaining_after_filtering_diagnostics.csv: {out['too_few_events_remaining_after_filtering_diagnostics_csv']}")
+        print(f"first_failed_upstream_stage_summary.csv: {out['first_failed_upstream_stage_summary_csv']}")
+        print(f"first_failed_upstream_stage_by_period_bin.csv: {out['first_failed_upstream_stage_by_period_bin_csv']}")
+        print(f"event_detection_zero_events_diagnostics.csv: {out['event_detection_zero_events_diagnostics_csv']}")
+        print(f"event_detection_insufficient_support_diagnostics.csv: {out['event_detection_insufficient_support_diagnostics_csv']}")
+        print(f"suspected_zero_event_cause_summary.csv: {out['suspected_zero_event_cause_summary_csv']}")
+        print(f"suspected_zero_event_cause_by_period_bin.csv: {out['suspected_zero_event_cause_by_period_bin_csv']}")
+        print(f"suspected_insufficient_support_cause_summary.csv: {out['suspected_insufficient_support_cause_summary_csv']}")
+        print(f"suspected_insufficient_support_cause_by_period_bin.csv: {out['suspected_insufficient_support_cause_by_period_bin_csv']}")
+        print(f"remaining_top_failure_reasons: {out['remaining_top_failure_reasons']}")
+        print(f"threshold_added_vs_mcc2: {out['threshold_added_vs_mcc2']}")
+        print(f"period_bin_15_20_delta_vs_mcc2: {out['period_bin_15_20_delta_vs_mcc2']}")
+        print(f"manual_review_delta_vs_mcc2: {out['manual_review_delta_vs_mcc2']}")
+        print(f"no_p_whiteness_value_column: {out['no_p_whiteness_value_column']}")
+        print(f"dominant_no_p_upstream_blocker: {out['dominant_no_p_upstream_blocker']}")
+        print(f"dominant_first_failed_upstream_stage: {out['dominant_first_failed_upstream_stage']}")
+        print(f"top_suspected_zero_event_cause: {out['top_suspected_zero_event_cause']}")
+        print(f"top_suspected_insufficient_support_cause: {out['top_suspected_insufficient_support_cause']}")
+        print(f"no_upstream_events_detected_count: {out['no_upstream_events_detected_count']}")
+        print(f"too_few_events_remaining_after_filtering_count: {out['too_few_events_remaining_after_filtering_count']}")
+        print(f"no_p_whiteness_related_blocker_count: {out['no_p_whiteness_related_blocker_count']}")
+        print(f"events_filtered_to_zero_whiteness_related_count: {out['events_filtered_to_zero_whiteness_related_count']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_shortlist_detector_mode_analysis":
+        out = K2ShortlistDetectorModeAnalysis.run_cli(argv=argv[1:])
+        print(f"detector_mode_comparison.csv: {out['detector_mode_comparison_csv']}")
+        print(f"rescued_by_detector_mode.csv: {out['rescued_by_detector_mode_csv']}")
+        print(f"rescued_by_detector_mode_by_period_bin.csv: {out['rescued_by_detector_mode_by_period_bin_csv']}")
+        print(f"detector_added_vs_mcc2: {out['detector_added_vs_mcc2']}")
+        print(f"period_bin_15_20_delta_vs_mcc2: {out['period_bin_15_20_delta_vs_mcc2']}")
+        print(f"zero_event_delta_vs_mcc2: {out['zero_event_delta_vs_mcc2']}")
+        print(f"insufficient_support_delta_vs_mcc2: {out['insufficient_support_delta_vs_mcc2']}")
+        print(f"manual_review_delta_vs_mcc2: {out['manual_review_delta_vs_mcc2']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_detector_quality_gated_comparison":
+        out = K2DetectorQualityGatedComparison.run_cli(argv=argv[1:])
+        print(f"detector_quality_gated_comparison.csv: {out['out_csv']}")
+        print(f"detector_quality_gated_epic_summary.csv: {out['epic_summary_csv']}")
+        print(f"detector_quality_gated_rollup.csv: {out['rollup_csv']}")
+        print(f"row_count: {out['row_count']}")
+        print(f"epic_count: {out['epic_count']}")
+        print(f"quality_gated_keeps_some_event_count_gain: {out['keeps_some_event_count_gain']}")
+        print(f"quality_gated_event_gain_epic_count_vs_default: {out['qg_event_gain_epic_count_vs_default']}")
+        print(f"quality_gated_event_gain_total_vs_default: {out['qg_event_gain_total_vs_default']}")
+        print(f"quality_gated_improves_best_shape_score_on_any_epic: {out['improves_best_shape_score_any']}")
+        print(
+            "quality_gated_shape_improved_epic_count_vs_plain_experimental: "
+            f"{out['qg_shape_improved_epic_count_vs_experimental']}"
+        )
+        print(f"quality_gated_improves_best_depth_snr_on_any_epic: {out['improves_best_depth_snr_any']}")
+        print(
+            "quality_gated_depth_improved_epic_count_vs_plain_experimental: "
+            f"{out['qg_depth_improved_epic_count_vs_experimental']}"
+        )
+        print(f"quality_gated_event_delta_total_vs_plain_experimental: {out['qg_event_delta_total_vs_experimental']}")
+        print(
+            "quality_gated_event_loss_epic_count_vs_plain_experimental: "
+            f"{out['qg_event_loss_epic_count_vs_experimental']}"
+        )
+        print(
+            "experimental_extra_events_vs_default_count: "
+            f"{out['experimental_extra_events_vs_default_count']}"
+        )
+        print(
+            "quality_gated_extra_events_vs_default_count: "
+            f"{out['quality_gated_extra_events_vs_default_count']}"
+        )
+        print(
+            "any_best_shape_score_improvement_vs_default_count: "
+            f"{out['any_best_shape_score_improvement_vs_default_count']}"
+        )
+        print(
+            "any_best_depth_snr_improvement_vs_default_count: "
+            f"{out['any_best_depth_snr_improvement_vs_default_count']}"
+        )
+        print(
+            "plain_high_recall_regressed_quality_count: "
+            f"{out['plain_high_recall_regressed_quality_count']}"
+        )
+        print(
+            "quality_gated_avoided_plain_regression_count: "
+            f"{out['quality_gated_avoided_plain_regression_count']}"
+        )
+        print(
+            "quality_gated_looks_better_than_plain_detector_high_recall_experimental_for_scaling: "
+            f"{out['looks_better_for_scaling']}"
+        )
+        print(f"recommendation: {out['recommendation']}")
         return
     K2CampaignRunner().run()
 

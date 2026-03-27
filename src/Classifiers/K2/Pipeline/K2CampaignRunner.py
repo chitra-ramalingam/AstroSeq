@@ -60,6 +60,28 @@ class K2CampaignRunner:
         p.add_argument("--whiteness_alpha", type=float, default=None, help="Whiteness p-value alpha threshold.")
         p.add_argument("--noisy-whiteness-threshold", type=float, default=None)
         p.add_argument("--noisy-step-threshold", type=float, default=None)
+        p.add_argument(
+            "--detector-operating-mode",
+            type=str,
+            default=K2BatchRunner.DEFAULT_DETECTOR_OPERATING_MODE,
+            choices=K2BatchRunner.detector_operating_mode_choices(),
+            help=(
+                "Detector-side candidate-generation preset. "
+                "detector_high_recall_experimental lowers the event detector sigma threshold only; "
+                "shortlist thresholds, MCC, and whiteness logic stay unchanged."
+            ),
+        )
+        p.add_argument(
+            "--detector-detect-sigma",
+            type=float,
+            default=None,
+            help="Optional explicit detector dip sigma threshold override. Use only for detector-side experiments.",
+        )
+        p.add_argument(
+            "--detector-only-analysis",
+            action="store_true",
+            help="Record detector candidate outcomes only; skip period validation and shortlist recovery.",
+        )
         p.add_argument("--cache_only", action="store_true", help="Use local cache only; never download missing products.")
         p.add_argument(
             "--retriage_batch",
@@ -105,6 +127,9 @@ class K2CampaignRunner:
             whiteness_alpha=args.whiteness_alpha,
             noisy_whiteness_threshold=args.noisy_whiteness_threshold,
             noisy_step_threshold=args.noisy_step_threshold,
+            detector_operating_mode=args.detector_operating_mode,
+            detector_detect_sigma=args.detector_detect_sigma,
+            detector_only_analysis=args.detector_only_analysis,
             cache_only=args.cache_only,
         )
 
@@ -143,6 +168,9 @@ class K2CampaignRunner:
         out = runner.run()
         print(f"Outputs saved under: {out['out_dir']}")
         print(f"batch_results.csv: {out['batch_results_csv']}")
+        if args.detector_only_analysis:
+            print(f"detector_candidate_results.csv: {out['detector_candidate_results_csv']}")
+            return
         print(f"leaderboard_periodic.csv: {out['leaderboard_periodic_csv']}")
         print(f"leaderboard_sparse.csv: {out['leaderboard_sparse_csv']}")
         print(f"leaderboard_top_shape.csv: {out['leaderboard_top_shape_csv']}")

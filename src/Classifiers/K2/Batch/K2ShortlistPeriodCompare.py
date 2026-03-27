@@ -187,6 +187,7 @@ class K2ShortlistPeriodCompare:
         if raw in {
             K2ShortlistPeriodConfig.PRECISION_FIRST_MODE_NAME,
             K2ShortlistPeriodConfig.HIGH_RECALL_MODE_NAME,
+            K2ShortlistPeriodConfig.THRESHOLD_RELAXED_MODE_NAME,
             "custom_threshold",
         }:
             return raw

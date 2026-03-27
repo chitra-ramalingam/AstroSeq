@@ -77,21 +77,103 @@ class K2ShortlistPeriodRunner:
     RAW_EPIC_REQUIRED_WHITENESS_VALUE_COLUMNS = ("triage_whiteness_pvalue", "triage_whiteness_score")
 
     @classmethod
+    def _operating_mode_choices(cls) -> List[str]:
+        return [
+            str(K2ShortlistPeriodConfig.PRECISION_FIRST_MODE_NAME),
+            str(K2ShortlistPeriodConfig.HIGH_RECALL_MODE_NAME),
+            str(K2ShortlistPeriodConfig.THRESHOLD_RELAXED_MODE_NAME),
+        ]
+
+    @classmethod
+    def _operating_mode_overrides(cls, mode: str) -> Dict[str, Any]:
+        resolved = str(mode).strip()
+        if resolved == str(K2ShortlistPeriodConfig.PRECISION_FIRST_MODE_NAME):
+            return {
+                "OPERATING_MODE": resolved,
+                "MIN_CLUSTER_COUNT": int(K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT),
+                "CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE": K2ShortlistPeriodConfig.CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE,
+                "CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE": K2ShortlistPeriodConfig.CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE,
+            }
+        if resolved == str(K2ShortlistPeriodConfig.HIGH_RECALL_MODE_NAME):
+            return {
+                "OPERATING_MODE": resolved,
+                "MIN_CLUSTER_COUNT": int(K2ShortlistPeriodConfig.MANUAL_REVIEW_CLUSTER_COUNT_EQ),
+                "CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE": K2ShortlistPeriodConfig.CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE,
+                "CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE": K2ShortlistPeriodConfig.CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE,
+            }
+        if resolved == str(K2ShortlistPeriodConfig.THRESHOLD_RELAXED_MODE_NAME):
+            return {
+                "OPERATING_MODE": resolved,
+                "MIN_CLUSTER_COUNT": int(K2ShortlistPeriodConfig.MANUAL_REVIEW_CLUSTER_COUNT_EQ),
+                "CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE": K2ShortlistPeriodConfig.THRESHOLD_RELAXED_CLUSTER2_MIN_HIT_RATE_SHAPE,
+                "CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE": K2ShortlistPeriodConfig.THRESHOLD_RELAXED_CLUSTER2_MIN_SOFT_HIT_RATE,
+            }
+        raise ValueError(
+            f"Unsupported operating mode {mode!r}; expected one of {cls._operating_mode_choices()}."
+        )
+
+    @classmethod
     def build_parser(cls) -> argparse.ArgumentParser:
         p = argparse.ArgumentParser(description="Run K2 shortlist period analysis from a whiteness-precomputed batch CSV.")
+        p.add_argument(
+            "--operating-mode",
+            dest="operating_mode",
+            choices=cls._operating_mode_choices(),
+            default=None,
+            help=(
+                "Optional preset operating mode. "
+                f"Choices: {', '.join(cls._operating_mode_choices())}. "
+                "Explicit threshold flags still override the preset."
+            ),
+        )
         p.add_argument(
             "--min-cluster-count",
             "--min_cluster_count",
             dest="min_cluster_count",
             type=int,
-            default=K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT,
-            help=f"Minimum count_hits required for a candidate period cluster. Default: {K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT}",
+            default=None,
+            help=(
+                "Minimum count_hits required for a candidate period cluster. "
+                f"Default policy: {K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT}."
+            ),
         )
         p.add_argument(
             "--run-id",
             dest="run_id",
             default=None,
             help="Optional run identifier used for the output subdirectory.",
+        )
+        p.add_argument(
+            "--raw-epic-list-csv",
+            "--raw_epic_list_csv",
+            dest="raw_epic_list_csv",
+            type=str,
+            default=None,
+            help="Optional override for the raw whiteness/batch CSV consumed by shortlist period.",
+        )
+        p.add_argument(
+            "--epics-dir",
+            "--epics_dir",
+            dest="epics_dir",
+            type=str,
+            default=None,
+            help="Optional override for the EPICS directory containing per-EPIC events.csv files.",
+        )
+        p.add_argument(
+            "--shortlist-csv",
+            "--shortlist_csv",
+            dest="shortlist_csv",
+            type=str,
+            default=None,
+            help="Optional override for the shortlist ranking CSV. Random-N selection can leave this unused.",
+        )
+        p.add_argument(
+            "--out-dir",
+            "--out_dir",
+            dest="out_dir",
+            type=str,
+            default=None,
+            help="Optional override for the shortlist period output directory.",
         )
         p.add_argument(
             "--period-stage-n",
@@ -133,10 +215,22 @@ class K2ShortlistPeriodRunner:
     @classmethod
     def run_cli(cls, argv: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         args = cls.build_parser().parse_args(list(argv) if argv is not None else None)
-        config_kwargs: Dict[str, Any] = {
-            "MIN_CLUSTER_COUNT": int(args.min_cluster_count),
-            "RUN_ID": (str(args.run_id) if args.run_id is not None and str(args.run_id).strip() != "" else K2ShortlistPeriodConfig.RUN_ID),
-        }
+        config_kwargs: Dict[str, Any] = {}
+        if args.operating_mode is not None:
+            config_kwargs.update(cls._operating_mode_overrides(str(args.operating_mode)))
+        if args.min_cluster_count is not None:
+            config_kwargs["MIN_CLUSTER_COUNT"] = int(args.min_cluster_count)
+        config_kwargs["RUN_ID"] = (
+            str(args.run_id) if args.run_id is not None and str(args.run_id).strip() != "" else K2ShortlistPeriodConfig.RUN_ID
+        )
+        if args.raw_epic_list_csv is not None:
+            config_kwargs["RAW_EPIC_LIST_CSV"] = str(args.raw_epic_list_csv)
+        if args.epics_dir is not None:
+            config_kwargs["EPICS_DIR"] = str(args.epics_dir)
+        if args.shortlist_csv is not None:
+            config_kwargs["SHORTLIST_CSV"] = str(args.shortlist_csv)
+        if args.out_dir is not None:
+            config_kwargs["OUT_DIR"] = str(args.out_dir)
         if args.period_stage_n is not None:
             config_kwargs["PERIOD_STAGE_N"] = int(args.period_stage_n)
         if args.cluster2_min_hit_rate_shape is not None:
@@ -151,6 +245,9 @@ class K2ShortlistPeriodRunner:
         self._period_file_re = re.compile(r"^period_([0-9]+(?:\.[0-9]+)?)_(hits|misses|uncovered)\.csv$", flags=re.IGNORECASE)
 
     def _mcc_policy_mode(self) -> str:
+        requested_mode = str(getattr(self.config, "OPERATING_MODE", "") or "").strip()
+        if requested_mode in self._operating_mode_choices():
+            return requested_mode
         default_mcc = int(K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT)
         current_mcc = int(getattr(self.config, "MIN_CLUSTER_COUNT", default_mcc))
         high_recall_mcc = int(getattr(self.config, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2))
@@ -171,6 +268,11 @@ class K2ShortlistPeriodRunner:
             return (
                 "MIN_CLUSTER_COUNT=2 is the supported high-recall mode. "
                 "It increases validated yield, but preferentially admits lower-support, weaker-hit-rate candidates; keep cluster_count==2 guardrails and review enabled."
+            )
+        if mode == str(getattr(self.config, "THRESHOLD_RELAXED_MODE_NAME", "supported_high_recall_threshold_relaxed")):
+            return (
+                "MIN_CLUSTER_COUNT=2 with relaxed cluster_count==2 guardrails is a threshold-relaxed experiment. "
+                "Use it only to measure whether additional recovery comes from threshold-side relaxation after MCC, and keep manual review enabled."
             )
         return (
             "Custom MIN_CLUSTER_COUNT in use; compare against the MCC=3 default before promoting any threshold change."
@@ -2642,8 +2744,13 @@ class K2ShortlistPeriodRunner:
         )
 
         diagnostics_row = {
+            "operating_mode_requested": str(getattr(cfg, "OPERATING_MODE", "") or ""),
             "mcc_policy_mode": str(self._mcc_policy_mode()),
             "mcc_policy_note": str(self._mcc_policy_note()),
+            "raw_epic_list_csv": str(cfg.raw_epic_list_csv_path),
+            "epics_dir": str(cfg.epics_dir_path),
+            "shortlist_csv": str(cfg.shortlist_csv_path),
+            "out_dir": str(cfg.out_dir_path),
             "min_cluster_count": int(getattr(cfg, "MIN_CLUSTER_COUNT", K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT)),
             "default_min_cluster_count": int(K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT),
             "manual_review_cluster_count_eq": int(getattr(cfg, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2)),
