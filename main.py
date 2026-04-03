@@ -10,6 +10,16 @@ from src.Classifiers.K2.Batch.K2ShortlistPeriodCompare import K2ShortlistPeriodC
 from src.Classifiers.K2.Batch.K2ShortlistRecoveryModeAnalysis import K2ShortlistRecoveryModeAnalysis
 from src.Classifiers.K2.Batch.K2ShortlistDetectorModeAnalysis import K2ShortlistDetectorModeAnalysis
 from src.Classifiers.K2.Batch.K2DetectorQualityGatedComparison import K2DetectorQualityGatedComparison
+from src.Classifiers.K2.Batch.K2DetectorQualityGatedBroaderWinnerDownstreamAnalysis import (
+    K2DetectorQualityGatedBroaderWinnerDownstreamAnalysis,
+)
+from src.Classifiers.K2.Batch.K2DetectorQualityGatedBroaderCachedFailedDownstreamReport import (
+    K2DetectorQualityGatedBroaderCachedFailedDownstreamReport,
+)
+from src.Classifiers.K2.Batch.K2DetectorQualityGatedBroaderPostRescueFailureAnalysis import (
+    K2DetectorQualityGatedBroaderPostRescueFailureAnalysis,
+)
+from src.Classifiers.K2.Batch.K2CachedFailedBroaderDownstreamRunner import K2CachedFailedBroaderDownstreamRunner
 from src.Classifiers.CnnModel import CnnModel
 from src.Classifiers.LargeWindow.LargeWindow_Processor import LargeWindowCnnModel
 
@@ -224,6 +234,81 @@ def main():
             f"{out['looks_better_for_scaling']}"
         )
         print(f"recommendation: {out['recommendation']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_detector_quality_gated_broader_winner_downstream_analysis":
+        out = K2DetectorQualityGatedBroaderWinnerDownstreamAnalysis.run_cli(argv=argv[1:])
+        print(f"detector_quality_gated_broader_winner_downstream_analysis.csv: {out['analysis_csv']}")
+        print(f"detector_quality_gated_broader_winner_downstream_rollup.csv: {out['analysis_rollup_csv']}")
+        print(f"detector_quality_gated_broader_real_rescues.csv: {out['real_rescues_csv']}")
+        print(f"winners_total: {out['winners_total']}")
+        print(f"real_rescues: {out['real_rescues']}")
+        print(f"detector_only_gains: {out['detector_only_gains']}")
+        print(f"still_blocked: {out['still_blocked']}")
+        top_failure_reasons = out.get("top_failure_reasons", {})
+        if isinstance(top_failure_reasons, dict) and len(top_failure_reasons) > 0:
+            failure_text = " | ".join([f"{k}:{v}" for k, v in top_failure_reasons.items()])
+            print(f"top_10_failure_reasons: {failure_text}")
+        else:
+            print("top_10_failure_reasons: none")
+        rescue_bins = out.get("rescue_counts_by_period_bin", {})
+        if isinstance(rescue_bins, dict) and len(rescue_bins) > 0:
+            rescue_text = " | ".join([f"{k}:{v}" for k, v in rescue_bins.items()])
+            print(f"rescue_counts_by_period_bin: {rescue_text}")
+        else:
+            print("rescue_counts_by_period_bin: none")
+        return
+    if len(argv) > 0 and argv[0] == "k2_detector_quality_gated_broader_cached_failed_downstream_report":
+        out = K2DetectorQualityGatedBroaderCachedFailedDownstreamReport.run_cli(argv=argv[1:])
+        print(f"detector_quality_gated_broader_downstream_summary.csv: {out['summary_csv']}")
+        print(f"detector_quality_gated_broader_quarantined_winners.csv: {out['quarantined_winners_csv']}")
+        print(f"detector_quality_gated_broader_best_winners.csv: {out['best_winners_csv']}")
+        print(f"winners_total: {out['winners_total']}")
+        print(f"winners_in_best: {out['winners_in_best']}")
+        print(f"winners_in_quarantine: {out['winners_in_quarantine']}")
+        print(f"downstream_conversion_rate: {out['downstream_conversion_rate']:.6f}")
+        top_failure_reasons = out.get("top_failure_reasons", {})
+        for reason_column in ["failure_category", "shortlist_rejection_reason", "terminal_reason"]:
+            reason_map = top_failure_reasons.get(reason_column, {})
+            if isinstance(reason_map, dict) and len(reason_map) > 0:
+                reason_text = " | ".join([f"{k}:{v}" for k, v in reason_map.items()])
+                print(f"top_{reason_column}: {reason_text}")
+            else:
+                print(f"top_{reason_column}: none")
+        return
+    if len(argv) > 0 and argv[0] == "k2_detector_quality_gated_broader_post_rescue_failure_analysis":
+        out = K2DetectorQualityGatedBroaderPostRescueFailureAnalysis.run_cli(argv=argv[1:])
+        print(f"detector_quality_gated_broader_post_rescue_failure_analysis.csv: {out['analysis_csv']}")
+        print(f"detector_quality_gated_broader_post_rescue_failure_rollup.csv: {out['rollup_csv']}")
+        print(f"quarantined_winners_total: {out['quarantined_winners_total']}")
+        bucket_counts = out.get("bucket_counts", {})
+        for bucket in [
+            "true insufficient signal",
+            "likely recoverable with looser cluster/period policy",
+            "likely recoverable with histogram handling changes",
+            "likely unrecoverable / noise",
+        ]:
+            print(f"{bucket}: {bucket_counts.get(bucket, 0)}")
+        print(f"recommended_next_lever: {out['recommended_next_lever']}")
+        print(f"recommendation_rationale: {out['recommendation_rationale']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_cached_failed_broader_downstream":
+        out = K2CachedFailedBroaderDownstreamRunner.run_cli(argv=argv[1:])
+        print(f"shards_root: {out['shards_root']}")
+        print(f"shard_count: {out['shard_count']}")
+        print(f"out_dir: {out['out_dir']}")
+        print(f"merged_batch_results.csv: {out['merged_batch_csv']}")
+        print(f"downstream_input_shards.csv: {out['input_manifest_csv']}")
+        print(f"shortlist_top_shape.csv: {out['shortlist_top_shape_csv']}")
+        print(f"shortlist_top_shape_for_period.csv: {out['shortlist_top_shape_for_period_csv']}")
+        print(f"period_shortlist_summary.csv: {out['period_shortlist_summary_csv']}")
+        print(f"period_shortlist_summary_unique_epicP.csv: {out['period_shortlist_summary_unique_epicp_csv']}")
+        print(f"period_shortlist_summary_validated_only.csv: {out['period_shortlist_summary_validated_only_csv']}")
+        print(f"period_shortlist_best.csv: {out['period_shortlist_best_csv']}")
+        print(f"period_shortlist_quarantine.csv: {out['period_shortlist_quarantine_csv']}")
+        print(f"period_shortlist_diagnostics.csv: {out['period_shortlist_diagnostics_csv']}")
+        print(f"epic_funnel_reasons.csv: {out['epic_funnel_reasons_csv']}")
+        print(f"period_hist_summary_vs_best_counts.csv: {out['period_hist_counts_csv']}")
+        print(f"validation_enabled: {out['validation_enabled']}")
         return
     K2CampaignRunner().run()
 

@@ -358,6 +358,41 @@ class K2ShortlistPeriodRunner:
             return pd.DataFrame()
 
     @staticmethod
+    def _choose_whiteness_value_column(df: pd.DataFrame) -> str:
+        candidates = ["triage_whiteness_pvalue", "triage_whiteness_score"]
+        for col in candidates:
+            if col in df.columns:
+                series = pd.to_numeric(df[col], errors="coerce")
+                if bool(series.notna().any()):
+                    return col
+        for col in candidates:
+            if col in df.columns:
+                return col
+        return "triage_whiteness_pvalue"
+
+    @staticmethod
+    def _epic_dir_override_map(raw_epics_df: pd.DataFrame) -> Dict[str, str]:
+        if len(raw_epics_df) == 0 or "epic_id" not in raw_epics_df.columns or "epic_dir" not in raw_epics_df.columns:
+            return {}
+        epics = raw_epics_df["epic_id"].fillna("").astype(str).str.strip()
+        epic_dirs = raw_epics_df["epic_dir"].fillna("").astype(str).str.strip()
+        pairs = [(str(epic), str(epic_dir)) for epic, epic_dir in zip(epics.tolist(), epic_dirs.tolist()) if str(epic) != "" and str(epic_dir) != ""]
+        return dict(pairs)
+
+    @staticmethod
+    def _resolve_events_path(epics_dir: Path, epic_folder: str, epic_dir_override: str) -> Tuple[Path, Path]:
+        override = Path(str(epic_dir_override).strip()) if str(epic_dir_override).strip() != "" else None
+        if override is not None:
+            direct_events = override / "events.csv"
+            nested_events = override / epic_folder / "events.csv"
+            if direct_events.exists():
+                return override, direct_events
+            if nested_events.exists():
+                return override / epic_folder, nested_events
+        default_epic_dir = epics_dir / epic_folder
+        return default_epic_dir, default_epic_dir / "events.csv"
+
+    @staticmethod
     def _phase_cluster_score_quiet(events_df: pd.DataFrame, period: float, tol_phase: float) -> Tuple[int, float]:
         if "t_mid" not in events_df.columns or (not np.isfinite(period)) or period <= 0:
             return 0, float("nan")
@@ -1059,7 +1094,7 @@ class K2ShortlistPeriodRunner:
         out = out.loc[out["epic_id"] != ""].copy()
         out = out.drop_duplicates(subset=["epic_id"], keep="first").reset_index(drop=True)
 
-        whiteness_col = "triage_whiteness_pvalue" if "triage_whiteness_pvalue" in out.columns else "triage_whiteness_score"
+        whiteness_col = self._choose_whiteness_value_column(out)
         w = pd.to_numeric(out.get(whiteness_col, np.nan), errors="coerce")
         null_mask = w.isna()
         out["triage_whiteness_value"] = w
@@ -2322,6 +2357,7 @@ class K2ShortlistPeriodRunner:
         else:
             shortlist_df = pd.DataFrame({"query": pd.Series([], dtype=str)})
         raw_epics_df = self._load_raw_epic_table(shortlist_df=shortlist_df)
+        epic_dir_overrides = self._epic_dir_override_map(raw_epics_df)
         selected, selection_meta = self._select_period_stage_queries(
             raw_epics_df=raw_epics_df,
             shortlist_df=shortlist_df,
@@ -2372,7 +2408,12 @@ class K2ShortlistPeriodRunner:
         for i, query in enumerate(selected, start=1):
             epic_id = self._extract_epic(query)
             epic_folder = f"EPIC_{epic_id}" if epic_id is not None else None
-            events_path = (epics_dir / epic_folder / "events.csv") if epic_folder is not None else None
+            epic_dir_override = epic_dir_overrides.get(str(epic_id), "") if epic_id is not None else ""
+            resolved_epic_dir, events_path = (
+                self._resolve_events_path(epics_dir=epics_dir, epic_folder=epic_folder, epic_dir_override=epic_dir_override)
+                if epic_folder is not None
+                else (Path(""), None)
+            )
             events_exists = bool(events_path is not None and events_path.exists())
 
             if i <= 5:
@@ -2386,7 +2427,7 @@ class K2ShortlistPeriodRunner:
                 summary_rows.append(self._summary_row(epic=str(query), query=str(query), reason="cannot_parse_epic"))
                 continue
 
-            epic_dir = epics_dir / epic_folder
+            epic_dir = resolved_epic_dir
             if not events_exists:
                 print(f"[{i}/{len(selected)}] EPIC {epic_id} -> skip (missing {events_path})")
                 summary_rows.append(self._summary_row(epic=str(epic_id), query=str(query), reason="missing_events_csv"))
