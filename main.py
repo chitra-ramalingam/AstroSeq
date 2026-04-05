@@ -20,6 +20,19 @@ from src.Classifiers.K2.Batch.K2DetectorQualityGatedBroaderPostRescueFailureAnal
     K2DetectorQualityGatedBroaderPostRescueFailureAnalysis,
 )
 from src.Classifiers.K2.Batch.K2CachedFailedBroaderDownstreamRunner import K2CachedFailedBroaderDownstreamRunner
+from src.Classifiers.K2.Batch.K2DetectorQualityGatedScaleValidation import K2DetectorQualityGatedScaleValidation
+from src.Classifiers.K2.Batch.K2DetectorQualityGatedScaleValidationPostHoldFailureAnalysis import (
+    K2DetectorQualityGatedScaleValidationPostHoldFailureAnalysis,
+)
+from src.Classifiers.K2.Batch.K2DetectorQualityGatedScaleValidationClusterPolicyAnalysis import (
+    K2DetectorQualityGatedScaleValidationClusterPolicyAnalysis,
+)
+from src.Classifiers.K2.Batch.K2DetectorQualityGatedScaleValidationConditionalMcc2Experiment import (
+    K2DetectorQualityGatedScaleValidationConditionalMcc2Experiment,
+)
+from src.Classifiers.K2.Batch.K2DetectorQualityGatedConditionalMcc2LimitedBroaderValidation import (
+    K2DetectorQualityGatedConditionalMcc2LimitedBroaderValidation,
+)
 from src.Classifiers.CnnModel import CnnModel
 from src.Classifiers.LargeWindow.LargeWindow_Processor import LargeWindowCnnModel
 
@@ -262,10 +275,16 @@ def main():
         print(f"detector_quality_gated_broader_downstream_summary.csv: {out['summary_csv']}")
         print(f"detector_quality_gated_broader_quarantined_winners.csv: {out['quarantined_winners_csv']}")
         print(f"detector_quality_gated_broader_best_winners.csv: {out['best_winners_csv']}")
-        print(f"winners_total: {out['winners_total']}")
-        print(f"winners_in_best: {out['winners_in_best']}")
-        print(f"winners_in_quarantine: {out['winners_in_quarantine']}")
-        print(f"downstream_conversion_rate: {out['downstream_conversion_rate']:.6f}")
+        print(f"winners_total_unique: {out['winners_total_unique']}")
+        print(f"winners_in_best_only: {out['winners_in_best_only']}")
+        print(f"winners_in_quarantine_only: {out['winners_in_quarantine_only']}")
+        print(f"winners_in_both: {out['winners_in_both']}")
+        print(f"winners_in_neither: {out['winners_in_neither']}")
+        print(
+            "corrected_downstream_conversion_rate: "
+            f"{out['corrected_downstream_conversion_rate']:.6f} "
+            f"({out['corrected_downstream_conversion_numerator']}/{out['corrected_downstream_conversion_denominator']})"
+        )
         top_failure_reasons = out.get("top_failure_reasons", {})
         for reason_column in ["failure_category", "shortlist_rejection_reason", "terminal_reason"]:
             reason_map = top_failure_reasons.get(reason_column, {})
@@ -309,6 +328,121 @@ def main():
         print(f"epic_funnel_reasons.csv: {out['epic_funnel_reasons_csv']}")
         print(f"period_hist_summary_vs_best_counts.csv: {out['period_hist_counts_csv']}")
         print(f"validation_enabled: {out['validation_enabled']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_detector_quality_gated_scale_validation":
+        out = K2DetectorQualityGatedScaleValidation.run_cli(argv=argv[1:])
+        print(f"sampled_epic_manifest.csv: {out['sample_manifest_csv']}")
+        print(f"paired_detector_comparison.csv: {out['paired_detector_comparison_csv']}")
+        print(f"downstream_summary.csv: {out['downstream_summary_csv']}")
+        print(f"go_no_go_report.csv: {out['go_no_go_report_csv']}")
+        print(f"go_no_go_report.txt: {out['go_no_go_report_txt']}")
+        print(f"final_sample_n: {out['final_sample_n']}")
+        print(f"observed_winners: {out['observed_winners']}")
+        print(f"downstream_conversion_rate: {out['downstream_conversion_rate']:.6f}")
+        print(
+            f"downstream_conversion_ci: "
+            f"[{out['downstream_conversion_ci_low']:.6f}, {out['downstream_conversion_ci_high']:.6f}]"
+        )
+        print(f"final_recommendation: {out['final_recommendation']}")
+        print(f"last_expansion_reason: {out['last_expansion_reason']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_detector_quality_gated_scale_validation_post_hold_failure_analysis":
+        out = K2DetectorQualityGatedScaleValidationPostHoldFailureAnalysis.run_cli(argv=argv[1:])
+        print(f"scale_validation_post_hold_quarantined_winners_analysis.csv: {out['analysis_csv']}")
+        print(f"scale_validation_post_hold_quarantined_winners_rollup.csv: {out['rollup_csv']}")
+        print(f"quarantined_winners_total: {out['quarantined_winners_total']}")
+        bucket_counts = out.get("bucket_counts", {})
+        for bucket in [
+            "true insufficient signal",
+            "histogram construction / handling",
+            "cluster / period policy",
+            "candidate filter policy",
+            "something else",
+        ]:
+            print(f"{bucket}: {bucket_counts.get(bucket, 0)}")
+        print(f"recommended_next_lever: {out['recommended_next_lever']}")
+        print(f"recommendation_rationale: {out['recommendation_rationale']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_detector_quality_gated_scale_validation_cluster_policy_analysis":
+        out = K2DetectorQualityGatedScaleValidationClusterPolicyAnalysis.run_cli(argv=argv[1:])
+        print(f"scale_validation_cluster_policy_analysis.csv: {out['analysis_csv']}")
+        print(f"scale_validation_cluster_policy_rollup.csv: {out['rollup_csv']}")
+        print(f"cluster_policy_cases_total: {out['cluster_policy_cases_total']}")
+        bucket_counts = out.get("bucket_counts", {})
+        for bucket in [
+            "supported MCC=2 carve-out candidate",
+            "single-candidate near-miss",
+            "three-event borderline",
+            "two-event low-support",
+        ]:
+            print(f"{bucket}: {bucket_counts.get(bucket, 0)}")
+        print(f"dominant_gate: {out['dominant_gate']}")
+        print(f"recommended_smallest_safe_change: {out['recommended_smallest_safe_change']}")
+        print(f"recommendation_rationale: {out['recommendation_rationale']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_detector_quality_gated_scale_validation_conditional_mcc2_experiment":
+        out = K2DetectorQualityGatedScaleValidationConditionalMcc2Experiment.run_cli(argv=argv[1:])
+        print(f"conditional_mcc2_experiment_paired_downstream_analysis.csv: {out['experiment_analysis_csv']}")
+        print(f"conditional_mcc2_experiment_comparison.csv: {out['comparison_csv']}")
+        print(f"conditional_mcc2_experiment_summary.csv: {out['summary_csv']}")
+        print(f"conditional_mcc2_experiment_go_no_go_report.csv: {out['go_no_go_csv']}")
+        print(f"conditional_mcc2_experiment_go_no_go_report.txt: {out['go_no_go_txt']}")
+        print(f"conditional_mcc2_experiment_decision_audit.csv: {out['decision_audit_csv']}")
+        print(f"conditional_mcc2_experiment_decision_audit.txt: {out['decision_audit_txt']}")
+        print(f"conditional_mcc2_experiment_next_limited_broader_validation_plan.txt: {out['broader_validation_plan_txt']}")
+        print(f"baseline_winners_total: {out['baseline_metrics']['winners_total']}")
+        print(f"baseline_winners_in_best: {out['baseline_metrics']['winners_in_best']}")
+        print(f"baseline_winners_in_quarantine: {out['baseline_metrics']['winners_in_quarantine']}")
+        print(f"baseline_downstream_conversion_rate: {out['baseline_metrics']['downstream_conversion_rate']:.6f}")
+        print(f"baseline_quarantine_to_best_ratio: {out['baseline_metrics']['quarantine_to_best_ratio']:.6f}")
+        print(f"baseline_final_recommendation: {out['baseline_metrics']['final_recommendation']}")
+        print(f"experiment_winners_total: {out['experiment_metrics']['winners_total']}")
+        print(f"experiment_winners_in_best: {out['experiment_metrics']['winners_in_best']}")
+        print(f"experiment_winners_in_quarantine: {out['experiment_metrics']['winners_in_quarantine']}")
+        print(f"experiment_downstream_conversion_rate: {out['experiment_metrics']['downstream_conversion_rate']:.6f}")
+        print(f"experiment_quarantine_to_best_ratio: {out['experiment_metrics']['quarantine_to_best_ratio']:.6f}")
+        print(f"experiment_final_recommendation: {out['experiment_metrics']['final_recommendation']}")
+        print(f"paired_gain_cases: {out['paired_gain_cases']}")
+        print(f"paired_regression_cases: {out['paired_regression_cases']}")
+        print(f"harmful_regression_cases: {out['harmful_regression_cases']}")
+        for row in out.get("decision_audit_rows", []):
+            if str(row.get("section", "")) != "criterion":
+                continue
+            print(
+                f"criterion[{row.get('criterion_group', '')}] {row.get('criterion_name', '')}: "
+                f"observed={row.get('observed_value', '')} threshold={row.get('threshold', '')} "
+                f"passed={row.get('passed', '')}"
+            )
+        for row in out.get("decision_audit_rows", []):
+            if str(row.get("criterion_name", "")) == "hold_type":
+                print(f"hold_type: {row.get('observed_value', '')}")
+                print(f"final_recommendation_explanation: {row.get('explanation', '')}")
+                break
+        return
+    if len(argv) > 0 and argv[0] == "k2_detector_quality_gated_conditional_mcc2_limited_broader_validation":
+        out = K2DetectorQualityGatedConditionalMcc2LimitedBroaderValidation.run_cli(argv=argv[1:])
+        print(f"limited_broader_validation_plan.txt: {out['plan_txt']}")
+        print(f"operating_mode: {out['operating_mode']}")
+        print(f"prepare_only: {out['prepare_only']}")
+        print(f"run_command: {out['run_command']}")
+        if not bool(out["prepare_only"]):
+            runner_out = out["runner_out"]
+            report_out = out["report_out"]
+            print(f"period_shortlist_best.csv: {runner_out['period_shortlist_best_csv']}")
+            print(f"period_shortlist_quarantine.csv: {runner_out['period_shortlist_quarantine_csv']}")
+            print(f"epic_funnel_reasons.csv: {runner_out['epic_funnel_reasons_csv']}")
+            print(f"detector_quality_gated_broader_downstream_summary.csv: {report_out['summary_csv']}")
+            print(f"winners_total_unique: {report_out['winners_total_unique']}")
+            print(f"winners_in_best_only: {report_out['winners_in_best_only']}")
+            print(f"winners_in_quarantine_only: {report_out['winners_in_quarantine_only']}")
+            print(f"winners_in_both: {report_out['winners_in_both']}")
+            print(f"winners_in_neither: {report_out['winners_in_neither']}")
+            print(
+                "corrected_downstream_conversion_rate: "
+                f"{report_out['corrected_downstream_conversion_rate']:.6f} "
+                f"({report_out['corrected_downstream_conversion_numerator']}/"
+                f"{report_out['corrected_downstream_conversion_denominator']})"
+            )
         return
     K2CampaignRunner().run()
 

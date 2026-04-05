@@ -4,8 +4,10 @@ import argparse
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import local
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -79,6 +81,7 @@ class K2BatchRunner:
         resume: bool = False,
         skip_existing_epics: bool = True,
         cache_only: bool = False,
+        max_workers: int = 1,
     ) -> None:
         self.out_dir = Path(out_dir)
         self.epics_dir = self.out_dir / "epics"
@@ -89,6 +92,7 @@ class K2BatchRunner:
         self.resume = bool(resume)
         self.skip_existing_epics = bool(skip_existing_epics)
         self.cache_only = bool(cache_only)
+        self.max_workers = int(max(1, max_workers))
         self.top_k_periods = int(max(1, top_k_periods))
         self.period_candidate_pool = int(max(self.top_k_periods, period_candidate_pool))
         self.phase_tol = float(phase_tol)
@@ -106,6 +110,12 @@ class K2BatchRunner:
             detector_detect_sigma=detector_detect_sigma,
         )
         self.detector_only_analysis = bool(detector_only_analysis)
+        self.validator_tol_days = float(validator_tol_days)
+        self.validator_outer_window_days = float(validator_outer_window_days)
+        self.validator_min_duration_cadences = int(validator_min_duration_cadences)
+        self.validator_shape_threshold = float(validator_shape_threshold)
+        self.validator_snr_threshold = float(validator_snr_threshold)
+        self._thread_local = local()
 
         logging.getLogger("lightkurve").setLevel(logging.WARNING)
 
@@ -123,15 +133,18 @@ class K2BatchRunner:
             whiteness_score_definition=whiteness_score_definition,
         )
         self.noise_loader = K2NoiseLoader(loader_config=self.loader_config, noise_config=self.noise_config)
-        self.detector = self._build_detector(detect_sigma=float(self.detector_detect_sigma))
+        self.detector = self._build_detector(
+            detect_sigma=float(self.detector_detect_sigma),
+            loader=self.noise_loader,
+        )
         self._default_detector: Optional[K2TimeDomainTransitPipeline] = None
         self.validator = K2PeriodValidator(
             detector=self.detector,
-            tol_days=float(validator_tol_days),
-            outer_window_days=float(validator_outer_window_days),
-            min_duration_cadences=int(validator_min_duration_cadences),
-            shape_threshold=float(validator_shape_threshold),
-            snr_threshold=float(validator_snr_threshold),
+            tol_days=float(self.validator_tol_days),
+            outer_window_days=float(self.validator_outer_window_days),
+            min_duration_cadences=int(self.validator_min_duration_cadences),
+            shape_threshold=float(self.validator_shape_threshold),
+            snr_threshold=float(self.validator_snr_threshold),
         )
         self.noisy_whiteness_threshold = (
             float(noisy_whiteness_threshold)
@@ -189,16 +202,69 @@ class K2BatchRunner:
             return float(cls.DETECTOR_HIGH_RECALL_EXPERIMENTAL_DETECT_SIGMA)
         return float(K2TimeDomainRankConfig.detect_sigma)
 
-    def _build_detector(self, detect_sigma: float) -> K2TimeDomainTransitPipeline:
+    def _build_detector(
+        self,
+        detect_sigma: float,
+        loader: Optional[K2NoiseLoader] = None,
+    ) -> K2TimeDomainTransitPipeline:
         return K2TimeDomainTransitPipeline(
-            loader=self.noise_loader,
+            loader=loader if loader is not None else self.noise_loader,
             rank_config=K2TimeDomainRankConfig(detect_sigma=float(detect_sigma)),
         )
 
+    def _get_active_noise_loader(self) -> K2NoiseLoader:
+        if self.max_workers <= 1:
+            return self.noise_loader
+        loader = getattr(self._thread_local, "noise_loader", None)
+        if loader is None:
+            loader = K2NoiseLoader(loader_config=self.loader_config, noise_config=self.noise_config)
+            self._thread_local.noise_loader = loader
+        return loader
+
+    def _get_active_detector(self) -> K2TimeDomainTransitPipeline:
+        if self.max_workers <= 1:
+            return self.detector
+        detector = getattr(self._thread_local, "detector", None)
+        if detector is None:
+            detector = self._build_detector(
+                detect_sigma=float(self.detector_detect_sigma),
+                loader=self._get_active_noise_loader(),
+            )
+            self._thread_local.detector = detector
+        return detector
+
     def _get_default_detector(self) -> K2TimeDomainTransitPipeline:
-        if self._default_detector is None:
-            self._default_detector = self._build_detector(detect_sigma=float(K2TimeDomainRankConfig.detect_sigma))
-        return self._default_detector
+        if self.max_workers <= 1:
+            if self._default_detector is None:
+                self._default_detector = self._build_detector(
+                    detect_sigma=float(K2TimeDomainRankConfig.detect_sigma),
+                    loader=self.noise_loader,
+                )
+            return self._default_detector
+        detector = getattr(self._thread_local, "default_detector", None)
+        if detector is None:
+            detector = self._build_detector(
+                detect_sigma=float(K2TimeDomainRankConfig.detect_sigma),
+                loader=self._get_active_noise_loader(),
+            )
+            self._thread_local.default_detector = detector
+        return detector
+
+    def _get_active_validator(self) -> K2PeriodValidator:
+        if self.max_workers <= 1:
+            return self.validator
+        validator = getattr(self._thread_local, "validator", None)
+        if validator is None:
+            validator = K2PeriodValidator(
+                detector=self._get_active_detector(),
+                tol_days=float(self.validator_tol_days),
+                outer_window_days=float(self.validator_outer_window_days),
+                min_duration_cadences=int(self.validator_min_duration_cadences),
+                shape_threshold=float(self.validator_shape_threshold),
+                snr_threshold=float(self.validator_snr_threshold),
+            )
+            self._thread_local.validator = validator
+        return validator
 
     @staticmethod
     def _as_float(value: Any, default: float = float("nan")) -> float:
@@ -283,8 +349,9 @@ class K2BatchRunner:
         status = str(triage.get("status", "")).strip().lower()
         usable = self._as_bool(triage.get("usable", False))
         why_not = str(triage.get("why_not_usable", "")).strip()
+        noise_loader = self._get_active_noise_loader()
         whiteness_definition = str(
-            triage.get("whiteness_definition", getattr(self.noise_loader.handler, "whiteness_definition", lambda: "")())
+            triage.get("whiteness_definition", getattr(noise_loader.handler, "whiteness_definition", lambda: "")())
         ).lower()
         whiteness_is_pvalue = "pvalue" in whiteness_definition
         if status != "ok":
@@ -307,8 +374,9 @@ class K2BatchRunner:
         if self._whiteness_debug_printed >= self._whiteness_debug_limit:
             return
         white = self._as_float(triage.get("whiteness_score", float("nan")))
+        noise_loader = self._get_active_noise_loader()
         definition = str(
-            triage.get("whiteness_definition", getattr(self.noise_loader.handler, "whiteness_definition", lambda: "unknown")())
+            triage.get("whiteness_definition", getattr(noise_loader.handler, "whiteness_definition", lambda: "unknown")())
         )
         is_pvalue = "pvalue" in definition.lower()
         if np.isfinite(white) and np.isfinite(self.noisy_whiteness_threshold):
@@ -391,7 +459,7 @@ class K2BatchRunner:
         return merged
 
     def _run_detector_for_query(self, query: str) -> Dict[str, Any]:
-        experimental = self.detector.run_one(
+        experimental = self._get_active_detector().run_one(
             query=query,
             limit=self.limit,
             exptime=self.exptime,
@@ -577,7 +645,8 @@ class K2BatchRunner:
         return "Unclassified", f"shape={shape:.3f} hit_rate_shape={hit:.3f} coverage={cov:.3f}"
 
     def _fetch_clean_time_flux(self, query: str) -> Tuple[np.ndarray, np.ndarray]:
-        fetched = self.noise_loader.handler.fetch_best(
+        noise_loader = self._get_active_noise_loader()
+        fetched = noise_loader.handler.fetch_best(
             query=query,
             limit=self.limit,
             exptime=self.exptime,
@@ -585,7 +654,7 @@ class K2BatchRunner:
         )
         if str(fetched.get("status", "ok")).lower() != "ok":
             raise RuntimeError(f"fetch_status={fetched.get('status', 'error')}")
-        cleaned = self.noise_loader.handler.clean(
+        cleaned = noise_loader.handler.clean(
             fetched["lc"],
             normalize=False,
             remove_nans=True,
@@ -944,6 +1013,220 @@ class K2BatchRunner:
         df.to_csv(out_csv, index=False)
         return out_csv
 
+    def _process_query(
+        self,
+        *,
+        idx: int,
+        total_queries: int,
+        query: str,
+        slug: str,
+    ) -> Dict[str, Any]:
+        epic_dir = self.epics_dir / slug
+        epic_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\n[{idx + 1}/{total_queries}] {query} -> {slug}")
+
+        row: Dict[str, Any] = {
+            "query": str(query),
+            "epic_id": slug,
+            "epic_dir": str(epic_dir),
+            "detector_operating_mode": str(self.detector_operating_mode),
+            "detector_detect_sigma": float(self.detector_detect_sigma),
+            "triage_status": "error",
+            "triage_usable": False,
+            "triage_score_global": float("nan"),
+            "triage_n_points": 0,
+            "triage_step_score": float("nan"),
+            "triage_whiteness_score": float("nan"),
+            "triage_whiteness_definition": "",
+            "triage_why_not_usable": "",
+            "n_points_after_preprocess": 0,
+            "error_stage": "",
+            "error_type": "",
+            "error_msg": "",
+            "author_selected": "",
+            "campaign_selected": "",
+            "cache_only": bool(self.cache_only),
+            "n_events": 0,
+            "best_shape_score": float("nan"),
+            "best_depth_snr": float("nan"),
+            "n_periods_proposed": 0,
+            "n_periods_validated": 0,
+            "best_period": float("nan"),
+            "hit_rate_shape": float("nan"),
+            "hit_rate_snr": float("nan"),
+            "coverage_rate": float("nan"),
+            "best_period_hit_rate_shape": float("nan"),
+            "best_period_hit_rate_snr": float("nan"),
+            "best_period_coverage_rate": float("nan"),
+            "events_csv": str(epic_dir / "events.csv"),
+            "best_hits_csv": "",
+            "best_misses_csv": "",
+            "best_uncovered_csv": "",
+            "best_hitmap_png": "",
+            "best_phase_offset_png": "",
+            "all_hitmap_pngs": "",
+            "all_phase_offset_pngs": "",
+            "label": "",
+            "label_reason": "",
+        }
+        period_rows: List[Dict[str, Any]] = []
+        hard_reasons: List[str] = []
+        current_error_stage = "detect"
+
+        try:
+            det = self._run_detector_for_query(query=query)
+            triage = dict(det.get("summary", {}))
+            events_df = pd.DataFrame(det.get("candidates", []))
+            events_df.to_csv(row["events_csv"], index=False)
+            best_shape, best_depth_snr = self._best_event_metrics(events_df)
+
+            row.update(
+                {
+                    "triage_status": str(triage.get("status", "error")),
+                    "triage_usable": self._as_bool(triage.get("usable", False), default=False),
+                    "triage_score_global": self._as_float(triage.get("score_global", float("nan"))),
+                    "triage_n_points": int(self._as_float(triage.get("n_points", 0.0), default=0.0)),
+                    "triage_step_score": self._as_float(triage.get("step_score", float("nan"))),
+                    "triage_whiteness_score": self._as_float(triage.get("whiteness_score", float("nan"))),
+                    "triage_whiteness_definition": str(triage.get("whiteness_definition", "")),
+                    "triage_why_not_usable": str(triage.get("why_not_usable", "")),
+                    "n_points_after_preprocess": int(
+                        self._as_float(triage.get("n_points_after_preprocess", 0.0), default=0.0)
+                    ),
+                    "error_stage": str(triage.get("error_stage", "")),
+                    "error_type": str(triage.get("error_type", "")),
+                    "error_msg": str(triage.get("error_msg", ""))[:200],
+                    "author_selected": str(triage.get("author_selected", triage.get("author", ""))),
+                    "campaign_selected": str(triage.get("campaign_selected", "")),
+                    "n_events": int(len(events_df)),
+                    "best_shape_score": float(best_shape),
+                    "best_depth_snr": float(best_depth_snr),
+                }
+            )
+            if (str(row.get("triage_status", "")).strip().lower() == "error") and (str(row.get("error_stage", "")).strip() == ""):
+                row["error_stage"] = "detect"
+            if (str(row.get("triage_status", "")).strip().lower() == "error") and (str(row.get("error_type", "")).strip() == ""):
+                row["error_type"] = "RuntimeError"
+            if (str(row.get("triage_status", "")).strip().lower() == "error") and (str(row.get("error_msg", "")).strip() == ""):
+                row["error_msg"] = "triage_status=error"
+            self._debug_whiteness_gate(query=query, triage=triage)
+
+            hard_reasons = self._hard_fail_reasons(triage)
+            if self.detector_only_analysis:
+                if len(events_df) > 0:
+                    print(
+                        f"[detector-only] recorded n_events={len(events_df)} "
+                        "and skipped period validation/shortlist recovery"
+                    )
+                else:
+                    print("[detector-only] no events detected; recorded detector outcome only")
+                hard_reasons = []
+            elif len(hard_reasons) == 0 and len(events_df) > 0:
+                current_error_stage = "period"
+                t, f = self._fetch_clean_time_flux(query=query)
+                proposals = self._propose_periods(events_df)
+                row["n_periods_proposed"] = int(len(proposals))
+
+                validator = self._get_active_validator()
+                for proposal in proposals.itertuples(index=False):
+                    p = float(proposal.period)
+                    p_tag = f"{p:.6f}"
+                    t0_guess = self._guess_t0(events_df=events_df, period=p, in_cluster=list(proposal.in_cluster_indices), time=t)
+                    val = validator.validate(time=t, flux=f, P=p, t0=t0_guess, quality_mask=None)
+                    self._print_soft_top10(scores_df=val.get("scores_df", pd.DataFrame()), period=p)
+
+                    hits_csv = epic_dir / f"period_{p_tag}_hits.csv"
+                    misses_csv = epic_dir / f"period_{p_tag}_misses.csv"
+                    uncovered_csv = epic_dir / f"period_{p_tag}_uncovered.csv"
+                    hitmap_png = epic_dir / f"period_{p_tag}_hitmap.png"
+                    phase_png = epic_dir / f"period_{p_tag}_phase_offset.png"
+
+                    hits_df = val["hits_df"]
+                    misses_df = val["misses_df"]
+                    uncovered_df = val["uncovered_df"]
+                    no_cand_df = self._split_no_cand(misses_df)
+                    print(
+                        f"P={p:.6f} hits={len(hits_df)} misses={len(misses_df)} "
+                        f"no_cand={len(no_cand_df)} uncovered={len(uncovered_df)}"
+                    )
+
+                    hits_df.to_csv(hits_csv, index=False)
+                    misses_df.to_csv(misses_csv, index=False)
+                    uncovered_df.to_csv(uncovered_csv, index=False)
+                    validator.plot_hitmap(
+                        hits_csv=hits_csv,
+                        misses_csv=misses_csv,
+                        uncovered_csv=uncovered_csv,
+                        outpath=hitmap_png,
+                        P=p,
+                    )
+                    validator.plot_phase_offset(
+                        hits_csv=hits_csv,
+                        misses_csv=misses_csv,
+                        uncovered_csv=uncovered_csv,
+                        outpath=phase_png,
+                        P=p,
+                        score_col="best_shape_score",
+                    )
+
+                    period_rows.append(
+                        {
+                            "period": float(p),
+                            "hit_rate_shape": self._as_float(val.get("hit_rate_shape", float("nan"))),
+                            "hit_rate_snr": self._as_float(val.get("hit_rate_snr", float("nan"))),
+                            "coverage_rate": self._as_float(val.get("coverage_rate", float("nan"))),
+                            "hits_csv": str(hits_csv),
+                            "misses_csv": str(misses_csv),
+                            "uncovered_csv": str(uncovered_csv),
+                            "hitmap_png": str(hitmap_png),
+                            "phase_offset_png": str(phase_png),
+                        }
+                    )
+            elif len(hard_reasons) > 0:
+                print(f"[skip] hard triage fail: {'; '.join(hard_reasons)}")
+            else:
+                print("[skip] no events detected; skipping period workflow")
+
+        except Exception as e:
+            row["triage_status"] = "error"
+            row["triage_usable"] = False
+            row["error_stage"] = str(current_error_stage if str(current_error_stage).strip() != "" else "detect")
+            row["error_type"] = type(e).__name__
+            row["error_msg"] = str(e)[:200]
+            hard_reasons.append(f"pipeline_error={type(e).__name__}:{e}")
+            print(f"[error] {query}: {type(e).__name__}: {e}")
+
+        if len(period_rows) > 0:
+            p_df = pd.DataFrame(period_rows).sort_values(
+                ["hit_rate_shape", "coverage_rate", "hit_rate_snr"],
+                ascending=[False, False, False],
+            )
+            best = p_df.iloc[0]
+            row.update(
+                {
+                    "n_periods_validated": int(len(p_df)),
+                    "best_period": self._as_float(best["period"]),
+                    "hit_rate_shape": self._as_float(best["hit_rate_shape"]),
+                    "hit_rate_snr": self._as_float(best["hit_rate_snr"]),
+                    "coverage_rate": self._as_float(best["coverage_rate"]),
+                    "best_period_hit_rate_shape": self._as_float(best["hit_rate_shape"]),
+                    "best_period_hit_rate_snr": self._as_float(best["hit_rate_snr"]),
+                    "best_period_coverage_rate": self._as_float(best["coverage_rate"]),
+                    "best_hits_csv": str(best["hits_csv"]),
+                    "best_misses_csv": str(best["misses_csv"]),
+                    "best_uncovered_csv": str(best["uncovered_csv"]),
+                    "best_hitmap_png": str(best["hitmap_png"]),
+                    "best_phase_offset_png": str(best["phase_offset_png"]),
+                    "all_hitmap_pngs": ";".join(p_df["hitmap_png"].astype(str).tolist()),
+                    "all_phase_offset_pngs": ";".join(p_df["phase_offset_png"].astype(str).tolist()),
+                }
+            )
+
+        label, reason = self._label_row(row=row, hard_reasons=hard_reasons)
+        row["label"] = label
+        row["label_reason"] = reason
+        return row
+
     def run(self) -> Dict[str, Any]:
         queries = self._load_queries()
         if len(queries) == 0:
@@ -954,6 +1237,8 @@ class K2BatchRunner:
             f"[K2BatchRunner] detector_operating_mode={self.detector_operating_mode} "
             f"detect_sigma={self.detector_detect_sigma:.3f}"
         )
+        if self.max_workers > 1:
+            print(f"[K2BatchRunner] max_workers={self.max_workers}")
 
         batch_csv = self.out_dir / "batch_results.csv"
 
@@ -984,221 +1269,66 @@ class K2BatchRunner:
             existing_epic_dirs = {p.name for p in self.epics_dir.iterdir() if p.is_dir()}
             print(f"[K2BatchRunner] Existing EPIC dirs detected: {len(existing_epic_dirs)}")
 
-        for idx in range(start_idx, len(queries)):
-            query = queries[idx]
-            slug = query_slugs[idx]
-            epic_dir = self.epics_dir / slug
+        submitted: Dict[int, Any] = {}
+        if self.max_workers > 1:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                for idx in range(start_idx, len(queries)):
+                    query = queries[idx]
+                    slug = query_slugs[idx]
+                    epic_dir = self.epics_dir / slug
+                    if self.skip_existing_epics and slug in existing_epic_dirs:
+                        print(f"\n[{idx + 1}/{len(queries)}] {query} -> {slug}")
+                        print(f"[skip] existing epic directory: {epic_dir}")
+                        submitted[idx] = None
+                        continue
+                    existing_epic_dirs.add(slug)
+                    submitted[idx] = executor.submit(
+                        self._process_query,
+                        idx=idx,
+                        total_queries=len(queries),
+                        query=query,
+                        slug=slug,
+                    )
+                for idx in range(start_idx, len(queries)):
+                    query = queries[idx]
+                    future = submitted.get(idx)
+                    if future is None:
+                        completed = idx + 1
+                        if (completed % 50 == 0) or (idx == (len(queries) - 1)):
+                            self._write_progress(last_completed_index=idx, last_completed_query=query)
+                        continue
+                    row = future.result()
+                    rows.append(row)
+                    batch_columns = self._append_batch_row(batch_csv=batch_csv, row=row, batch_columns=batch_columns)
+                    completed = idx + 1
+                    if (completed % 50 == 0) or (idx == (len(queries) - 1)):
+                        self._write_progress(last_completed_index=idx, last_completed_query=query)
+        else:
+            for idx in range(start_idx, len(queries)):
+                query = queries[idx]
+                slug = query_slugs[idx]
+                epic_dir = self.epics_dir / slug
 
-            if self.skip_existing_epics and slug in existing_epic_dirs:
-                print(f"\n[{idx + 1}/{len(queries)}] {query} -> {slug}")
-                print(f"[skip] existing epic directory: {epic_dir}")
+                if self.skip_existing_epics and slug in existing_epic_dirs:
+                    print(f"\n[{idx + 1}/{len(queries)}] {query} -> {slug}")
+                    print(f"[skip] existing epic directory: {epic_dir}")
+                    completed = idx + 1
+                    if (completed % 50 == 0) or (idx == (len(queries) - 1)):
+                        self._write_progress(last_completed_index=idx, last_completed_query=query)
+                    continue
+
+                existing_epic_dirs.add(slug)
+                row = self._process_query(
+                    idx=idx,
+                    total_queries=len(queries),
+                    query=query,
+                    slug=slug,
+                )
+                rows.append(row)
+                batch_columns = self._append_batch_row(batch_csv=batch_csv, row=row, batch_columns=batch_columns)
                 completed = idx + 1
                 if (completed % 50 == 0) or (idx == (len(queries) - 1)):
                     self._write_progress(last_completed_index=idx, last_completed_query=query)
-                continue
-
-            epic_dir.mkdir(parents=True, exist_ok=True)
-            existing_epic_dirs.add(slug)
-            print(f"\n[{idx + 1}/{len(queries)}] {query} -> {slug}")
-
-            row: Dict[str, Any] = {
-                "query": str(query),
-                "epic_id": slug,
-                "epic_dir": str(epic_dir),
-                "detector_operating_mode": str(self.detector_operating_mode),
-                "detector_detect_sigma": float(self.detector_detect_sigma),
-                "triage_status": "error",
-                "triage_usable": False,
-                "triage_score_global": float("nan"),
-                "triage_n_points": 0,
-                "triage_step_score": float("nan"),
-                "triage_whiteness_score": float("nan"),
-                "triage_whiteness_definition": "",
-                "triage_why_not_usable": "",
-                "n_points_after_preprocess": 0,
-                "error_stage": "",
-                "error_type": "",
-                "error_msg": "",
-                "author_selected": "",
-                "campaign_selected": "",
-                "cache_only": bool(self.cache_only),
-                "n_events": 0,
-                "best_shape_score": float("nan"),
-                "best_depth_snr": float("nan"),
-                "n_periods_proposed": 0,
-                "n_periods_validated": 0,
-                "best_period": float("nan"),
-                "hit_rate_shape": float("nan"),
-                "hit_rate_snr": float("nan"),
-                "coverage_rate": float("nan"),
-                "best_period_hit_rate_shape": float("nan"),
-                "best_period_hit_rate_snr": float("nan"),
-                "best_period_coverage_rate": float("nan"),
-                "events_csv": str(epic_dir / "events.csv"),
-                "best_hits_csv": "",
-                "best_misses_csv": "",
-                "best_uncovered_csv": "",
-                "best_hitmap_png": "",
-                "best_phase_offset_png": "",
-                "all_hitmap_pngs": "",
-                "all_phase_offset_pngs": "",
-                "label": "",
-                "label_reason": "",
-            }
-            period_rows: List[Dict[str, Any]] = []
-            hard_reasons: List[str] = []
-            current_error_stage = "detect"
-
-            try:
-                det = self._run_detector_for_query(query=query)
-                triage = dict(det.get("summary", {}))
-                events_df = pd.DataFrame(det.get("candidates", []))
-                events_df.to_csv(row["events_csv"], index=False)
-                best_shape, best_depth_snr = self._best_event_metrics(events_df)
-
-                row.update(
-                    {
-                        "triage_status": str(triage.get("status", "error")),
-                        "triage_usable": self._as_bool(triage.get("usable", False), default=False),
-                        "triage_score_global": self._as_float(triage.get("score_global", float("nan"))),
-                        "triage_n_points": int(self._as_float(triage.get("n_points", 0.0), default=0.0)),
-                        "triage_step_score": self._as_float(triage.get("step_score", float("nan"))),
-                        "triage_whiteness_score": self._as_float(triage.get("whiteness_score", float("nan"))),
-                        "triage_whiteness_definition": str(triage.get("whiteness_definition", "")),
-                        "triage_why_not_usable": str(triage.get("why_not_usable", "")),
-                        "n_points_after_preprocess": int(
-                            self._as_float(triage.get("n_points_after_preprocess", 0.0), default=0.0)
-                        ),
-                        "error_stage": str(triage.get("error_stage", "")),
-                        "error_type": str(triage.get("error_type", "")),
-                        "error_msg": str(triage.get("error_msg", ""))[:200],
-                        "author_selected": str(triage.get("author_selected", triage.get("author", ""))),
-                        "campaign_selected": str(triage.get("campaign_selected", "")),
-                        "n_events": int(len(events_df)),
-                        "best_shape_score": float(best_shape),
-                        "best_depth_snr": float(best_depth_snr),
-                    }
-                )
-                if (str(row.get("triage_status", "")).strip().lower() == "error") and (str(row.get("error_stage", "")).strip() == ""):
-                    row["error_stage"] = "detect"
-                if (str(row.get("triage_status", "")).strip().lower() == "error") and (str(row.get("error_type", "")).strip() == ""):
-                    row["error_type"] = "RuntimeError"
-                if (str(row.get("triage_status", "")).strip().lower() == "error") and (str(row.get("error_msg", "")).strip() == ""):
-                    row["error_msg"] = "triage_status=error"
-                self._debug_whiteness_gate(query=query, triage=triage)
-
-                hard_reasons = self._hard_fail_reasons(triage)
-                if self.detector_only_analysis:
-                    if len(events_df) > 0:
-                        print(
-                            f"[detector-only] recorded n_events={len(events_df)} "
-                            "and skipped period validation/shortlist recovery"
-                        )
-                    else:
-                        print("[detector-only] no events detected; recorded detector outcome only")
-                    hard_reasons = []
-                elif len(hard_reasons) == 0 and len(events_df) > 0:
-                    current_error_stage = "period"
-                    t, f = self._fetch_clean_time_flux(query=query)
-                    proposals = self._propose_periods(events_df)
-                    row["n_periods_proposed"] = int(len(proposals))
-
-                    for proposal in proposals.itertuples(index=False):
-                        p = float(proposal.period)
-                        p_tag = f"{p:.6f}"
-                        t0_guess = self._guess_t0(events_df=events_df, period=p, in_cluster=list(proposal.in_cluster_indices), time=t)
-                        val = self.validator.validate(time=t, flux=f, P=p, t0=t0_guess, quality_mask=None)
-                        self._print_soft_top10(scores_df=val.get("scores_df", pd.DataFrame()), period=p)
-
-                        hits_csv = epic_dir / f"period_{p_tag}_hits.csv"
-                        misses_csv = epic_dir / f"period_{p_tag}_misses.csv"
-                        uncovered_csv = epic_dir / f"period_{p_tag}_uncovered.csv"
-                        hitmap_png = epic_dir / f"period_{p_tag}_hitmap.png"
-                        phase_png = epic_dir / f"period_{p_tag}_phase_offset.png"
-
-                        hits_df = val["hits_df"]
-                        misses_df = val["misses_df"]
-                        uncovered_df = val["uncovered_df"]
-                        no_cand_df = self._split_no_cand(misses_df)
-                        print(
-                            f"P={p:.6f} hits={len(hits_df)} misses={len(misses_df)} "
-                            f"no_cand={len(no_cand_df)} uncovered={len(uncovered_df)}"
-                        )
-
-                        hits_df.to_csv(hits_csv, index=False)
-                        misses_df.to_csv(misses_csv, index=False)
-                        uncovered_df.to_csv(uncovered_csv, index=False)
-                        self.validator.plot_hitmap(hits_csv=hits_csv, misses_csv=misses_csv, uncovered_csv=uncovered_csv, outpath=hitmap_png, P=p)
-                        self.validator.plot_phase_offset(
-                            hits_csv=hits_csv,
-                            misses_csv=misses_csv,
-                            uncovered_csv=uncovered_csv,
-                            outpath=phase_png,
-                            P=p,
-                            score_col="best_shape_score",
-                        )
-
-                        period_rows.append(
-                            {
-                                "period": float(p),
-                                "hit_rate_shape": self._as_float(val.get("hit_rate_shape", float("nan"))),
-                                "hit_rate_snr": self._as_float(val.get("hit_rate_snr", float("nan"))),
-                                "coverage_rate": self._as_float(val.get("coverage_rate", float("nan"))),
-                                "hits_csv": str(hits_csv),
-                                "misses_csv": str(misses_csv),
-                                "uncovered_csv": str(uncovered_csv),
-                                "hitmap_png": str(hitmap_png),
-                                "phase_offset_png": str(phase_png),
-                            }
-                        )
-                elif len(hard_reasons) > 0:
-                    print(f"[skip] hard triage fail: {'; '.join(hard_reasons)}")
-                else:
-                    print("[skip] no events detected; skipping period workflow")
-
-            except Exception as e:
-                row["triage_status"] = "error"
-                row["triage_usable"] = False
-                row["error_stage"] = str(current_error_stage if str(current_error_stage).strip() != "" else "detect")
-                row["error_type"] = type(e).__name__
-                row["error_msg"] = str(e)[:200]
-                hard_reasons.append(f"pipeline_error={type(e).__name__}:{e}")
-                print(f"[error] {query}: {type(e).__name__}: {e}")
-
-            if len(period_rows) > 0:
-                p_df = pd.DataFrame(period_rows).sort_values(
-                    ["hit_rate_shape", "coverage_rate", "hit_rate_snr"],
-                    ascending=[False, False, False],
-                )
-                best = p_df.iloc[0]
-                row.update(
-                    {
-                        "n_periods_validated": int(len(p_df)),
-                        "best_period": self._as_float(best["period"]),
-                        "hit_rate_shape": self._as_float(best["hit_rate_shape"]),
-                        "hit_rate_snr": self._as_float(best["hit_rate_snr"]),
-                        "coverage_rate": self._as_float(best["coverage_rate"]),
-                        "best_period_hit_rate_shape": self._as_float(best["hit_rate_shape"]),
-                        "best_period_hit_rate_snr": self._as_float(best["hit_rate_snr"]),
-                        "best_period_coverage_rate": self._as_float(best["coverage_rate"]),
-                        "best_hits_csv": str(best["hits_csv"]),
-                        "best_misses_csv": str(best["misses_csv"]),
-                        "best_uncovered_csv": str(best["uncovered_csv"]),
-                        "best_hitmap_png": str(best["hitmap_png"]),
-                        "best_phase_offset_png": str(best["phase_offset_png"]),
-                        "all_hitmap_pngs": ";".join(p_df["hitmap_png"].astype(str).tolist()),
-                        "all_phase_offset_pngs": ";".join(p_df["phase_offset_png"].astype(str).tolist()),
-                    }
-                )
-
-            label, reason = self._label_row(row=row, hard_reasons=hard_reasons)
-            row["label"] = label
-            row["label_reason"] = reason
-            rows.append(row)
-            batch_columns = self._append_batch_row(batch_csv=batch_csv, row=row, batch_columns=batch_columns)
-            completed = idx + 1
-            if (completed % 50 == 0) or (idx == (len(queries) - 1)):
-                self._write_progress(last_completed_index=idx, last_completed_query=query)
 
         detector_candidate_results_csv: Optional[Path] = None
         if self.detector_only_analysis:
@@ -1249,6 +1379,7 @@ def _build_cli_parser() -> argparse.ArgumentParser:
     p.add_argument("--noise-mode", default="strict", choices=["strict", "discovery"], help="Noise triage mode.")
     p.add_argument("--resume", action="store_true", help="Resume from out_dir/progress.json if present.")
     p.add_argument("--cache-only", action="store_true", help="Process using local cache only; never download missing products.")
+    p.add_argument("--max-workers", type=int, default=1, help="Maximum concurrent per-query workers.")
     p.add_argument(
         "--detector-only-analysis",
         action="store_true",
@@ -1272,6 +1403,7 @@ def main() -> None:
         resume=args.resume,
         detector_only_analysis=args.detector_only_analysis,
         cache_only=args.cache_only,
+        max_workers=args.max_workers,
     )
     if args.rebuild_leaderboards:
         batch_csv = Path(args.input) if args.input else (Path(args.out_dir) / "batch_results.csv")

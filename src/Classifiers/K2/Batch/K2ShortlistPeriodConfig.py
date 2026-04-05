@@ -11,6 +11,11 @@ class K2ShortlistPeriodConfig:
     # - MIN_CLUSTER_COUNT=3: precision-first default
     # - MIN_CLUSTER_COUNT=2: supported high-recall mode with cluster_count==2 review/guardrails
     # - MIN_CLUSTER_COUNT=2 + relaxed cluster2 guardrails: threshold-relaxed experiment
+    # - MIN_CLUSTER_COUNT=3 with a conditional MCC=2 carve-out: limited experimental validation only
+    #   Current policy status:
+    #   - default global policy remains unchanged
+    #   - do not treat the carve-out as a supported policy
+    #   - do not schedule scale-up from this branch by default
     RAW_EPIC_LIST_CSV: str = r"plots\k2_batch\batch_results_whiteness.csv"
     RAW_EPIC_QUERY_COL: str = "query"
     SHORTLIST_CSV: str = r"plots\k2_batch\shortlist_top_shape_for_period.csv"
@@ -58,8 +63,13 @@ class K2ShortlistPeriodConfig:
     PRECISION_FIRST_MODE_NAME: str = "precision_first_default"
     HIGH_RECALL_MODE_NAME: str = "supported_high_recall"
     THRESHOLD_RELAXED_MODE_NAME: str = "supported_high_recall_threshold_relaxed"
+    SCALE_VALIDATION_CONDITIONAL_MCC2_MODE_NAME: str = "scale_validation_conditional_mcc2_experiment"
     DETECTOR_HIGH_RECALL_EXPERIMENTAL_MODE_NAME: str = "detector_high_recall_experimental"
     MANUAL_REVIEW_CLUSTER_COUNT_EQ: int = 2
+    CONDITIONAL_MIN_CLUSTER_COUNT_RELAX_ENABLED: bool = False
+    CONDITIONAL_MIN_CLUSTER_COUNT_RELAX_TO: int = 2
+    CONDITIONAL_MIN_CLUSTER_COUNT_MIN_EVENTS_AFTER_FILTERS: int = 4
+    CONDITIONAL_MIN_CLUSTER_COUNT_MIN_HIST_IN_RANGE: int = 2
     CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE: Optional[float] = 0.10
     CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE: Optional[float] = 0.10
     THRESHOLD_RELAXED_CLUSTER2_MIN_HIT_RATE_SHAPE: Optional[float] = 0.05
@@ -71,6 +81,7 @@ class K2ShortlistPeriodConfig:
     ENABLE_VALIDATION: bool = True
     CACHE_ONLY_FIRST: bool = False
     DOWNLOAD_IF_CACHE_MISS: bool = True
+    MAX_WORKERS: int = 1
     TOP_K_PERIODS: int = 3
     VALIDATION_TOP_K: int = 3
 

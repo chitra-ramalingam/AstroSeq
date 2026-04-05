@@ -26,8 +26,8 @@ class K2DetectorQualityGatedBroaderCachedFailedDownstreamReport:
     def build_parser(cls) -> argparse.ArgumentParser:
         p = argparse.ArgumentParser(
             description=(
-                "Join broader detector-quality-gated winners to the cached-failed broader downstream "
-                "April 1 outputs and summarize downstream conversion."
+                "Join broader detector-quality-gated winners to cached-failed broader downstream outputs, "
+                "report unique-EPIC conversion explicitly, and audit any row-level best/quarantine overlap."
             )
         )
         p.add_argument("--winners-csv", type=Path, default=cls.DEFAULT_WINNERS_CSV)
@@ -128,6 +128,10 @@ class K2DetectorQualityGatedBroaderCachedFailedDownstreamReport:
             for row in reason_rows[: max(0, int(top_n))]
         }
 
+    @staticmethod
+    def _sorted_examples(values: set[str], *, limit: int = 10) -> List[str]:
+        return sorted([str(v) for v in values if str(v).strip() != ""])[: max(0, int(limit))]
+
     def run(
         self,
         *,
@@ -179,29 +183,29 @@ class K2DetectorQualityGatedBroaderCachedFailedDownstreamReport:
         )
         funnel_prefixed = funnel.rename(columns={c: f"funnel_{c}" for c in funnel.columns if c != "epic_id_norm"})
 
-        best_winners = winners.merge(best_prefixed, on="epic_id_norm", how="inner").copy()
-        quarantined_winners = (
+        best_winners_any = winners.merge(best_prefixed, on="epic_id_norm", how="inner").copy()
+        quarantined_winners_any = (
             winners.merge(quarantine_prefixed, on="epic_id_norm", how="inner")
             .merge(funnel_prefixed, on="epic_id_norm", how="left")
             .copy()
         )
 
-        if len(quarantined_winners) > 0:
-            quarantined_winners["failure_category"] = quarantined_winners.apply(
+        if len(quarantined_winners_any) > 0:
+            quarantined_winners_any["failure_category"] = quarantined_winners_any.apply(
                 lambda row: self._first_nonempty_text(
                     row.get("quarantine_failure_category", ""),
                     row.get("funnel_period_failure_category", ""),
                 ),
                 axis=1,
             )
-            quarantined_winners["shortlist_rejection_reason"] = quarantined_winners.apply(
+            quarantined_winners_any["shortlist_rejection_reason"] = quarantined_winners_any.apply(
                 lambda row: self._first_nonempty_text(
                     row.get("quarantine_shortlist_rejection_reason", ""),
                     row.get("funnel_shortlist_rejection_reason", ""),
                 ),
                 axis=1,
             )
-            quarantined_winners["terminal_reason"] = quarantined_winners.apply(
+            quarantined_winners_any["terminal_reason"] = quarantined_winners_any.apply(
                 lambda row: self._first_nonempty_text(
                     row.get("funnel_terminal_reason", ""),
                     row.get("quarantine_terminal_reason", ""),
@@ -210,14 +214,42 @@ class K2DetectorQualityGatedBroaderCachedFailedDownstreamReport:
                 axis=1,
             )
         else:
-            quarantined_winners["failure_category"] = pd.Series(dtype=str)
-            quarantined_winners["shortlist_rejection_reason"] = pd.Series(dtype=str)
-            quarantined_winners["terminal_reason"] = pd.Series(dtype=str)
+            quarantined_winners_any["failure_category"] = pd.Series(dtype=str)
+            quarantined_winners_any["shortlist_rejection_reason"] = pd.Series(dtype=str)
+            quarantined_winners_any["terminal_reason"] = pd.Series(dtype=str)
 
-        winners_total = int(len(winners))
-        winners_in_best = int(len(best_winners))
-        winners_in_quarantine = int(len(quarantined_winners))
-        downstream_conversion_rate = float(winners_in_best / winners_total) if winners_total > 0 else 0.0
+        winner_epics = set(winners["epic_id_norm"].astype(str).tolist())
+        best_winner_epics = set(best_winners_any["epic_id_norm"].astype(str).tolist())
+        quarantined_winner_epics = set(quarantined_winners_any["epic_id_norm"].astype(str).tolist())
+        winners_in_both_epics = best_winner_epics.intersection(quarantined_winner_epics)
+        winners_in_best_only_epics = best_winner_epics.difference(quarantined_winner_epics)
+        winners_in_quarantine_only_epics = quarantined_winner_epics.difference(best_winner_epics)
+        winners_in_neither_epics = winner_epics.difference(best_winner_epics.union(quarantined_winner_epics))
+
+        best_winners = best_winners_any.loc[
+            best_winners_any["epic_id_norm"].astype(str).isin(best_winner_epics)
+        ].copy()
+        quarantined_winners = quarantined_winners_any.loc[
+            quarantined_winners_any["epic_id_norm"].astype(str).isin(winners_in_quarantine_only_epics)
+        ].copy()
+        overlap_winners = quarantined_winners_any.loc[
+            quarantined_winners_any["epic_id_norm"].astype(str).isin(winners_in_both_epics)
+        ].copy()
+
+        winners_total = int(len(winner_epics))
+        winners_with_any_best = int(len(best_winner_epics))
+        winners_with_any_quarantine = int(len(quarantined_winner_epics))
+        winners_in_best_only = int(len(winners_in_best_only_epics))
+        winners_in_quarantine_only = int(len(winners_in_quarantine_only_epics))
+        winners_in_both = int(len(winners_in_both_epics))
+        winners_in_neither = int(len(winners_in_neither_epics))
+        downstream_conversion_numerator = winners_with_any_best
+        downstream_conversion_denominator = winners_total
+        downstream_conversion_rate = (
+            float(downstream_conversion_numerator / downstream_conversion_denominator)
+            if downstream_conversion_denominator > 0
+            else 0.0
+        )
 
         reason_columns = [
             "failure_category",
@@ -225,14 +257,55 @@ class K2DetectorQualityGatedBroaderCachedFailedDownstreamReport:
             "terminal_reason",
         ]
         summary_rows: List[Dict[str, Any]] = [
-            {"section": "summary", "reason_column": "", "metric": "winners_total", "value": winners_total},
-            {"section": "summary", "reason_column": "", "metric": "winners_in_best", "value": winners_in_best},
-            {"section": "summary", "reason_column": "", "metric": "winners_in_quarantine", "value": winners_in_quarantine},
+            {"section": "summary", "reason_column": "", "metric": "winners_total_unique", "value": winners_total},
+            {"section": "summary", "reason_column": "", "metric": "winners_in_best_only", "value": winners_in_best_only},
             {
                 "section": "summary",
                 "reason_column": "",
-                "metric": "downstream_conversion_rate",
+                "metric": "winners_in_quarantine_only",
+                "value": winners_in_quarantine_only,
+            },
+            {"section": "summary", "reason_column": "", "metric": "winners_in_both", "value": winners_in_both},
+            {"section": "summary", "reason_column": "", "metric": "winners_in_neither", "value": winners_in_neither},
+            {
+                "section": "summary",
+                "reason_column": "",
+                "metric": "corrected_downstream_conversion_rate",
                 "value": downstream_conversion_rate,
+            },
+            {
+                "section": "summary",
+                "reason_column": "",
+                "metric": "corrected_downstream_conversion_numerator",
+                "value": downstream_conversion_numerator,
+            },
+            {
+                "section": "summary",
+                "reason_column": "",
+                "metric": "corrected_downstream_conversion_denominator",
+                "value": downstream_conversion_denominator,
+            },
+            {"section": "audit", "reason_column": "", "metric": "winners_with_any_best", "value": winners_with_any_best},
+            {
+                "section": "audit",
+                "reason_column": "",
+                "metric": "winners_with_any_quarantine",
+                "value": winners_with_any_quarantine,
+            },
+            {
+                "section": "audit",
+                "reason_column": "",
+                "metric": "unique_epic_conversion_definition",
+                "value": "winners_with_any_best / winners_total_unique",
+            },
+            {
+                "section": "audit",
+                "reason_column": "",
+                "metric": "row_level_overlap_interpretation",
+                "value": (
+                    "winners_in_both means row-level overlap: the same EPIC had a kept best row and at least one "
+                    "quarantined candidate row; use corrected_downstream_conversion_rate for EPIC-level conversion"
+                ),
             },
         ]
         top_reasons: Dict[str, Dict[str, int]] = {}
@@ -248,6 +321,27 @@ class K2DetectorQualityGatedBroaderCachedFailedDownstreamReport:
                         "value": row["count"],
                     }
                 )
+
+        overlap_examples = self._sorted_examples(winners_in_both_epics)
+        if len(overlap_examples) > 0:
+            summary_rows.append(
+                {
+                    "section": "audit",
+                    "reason_column": "",
+                    "metric": "winners_in_both_example_epics",
+                    "value": "|".join(overlap_examples),
+                }
+            )
+        overlap_reason_counts = self._count_reasons(overlap_winners, column="failure_category")
+        for row in overlap_reason_counts:
+            summary_rows.append(
+                {
+                    "section": "overlap_audit",
+                    "reason_column": "failure_category",
+                    "metric": row["reason_value"],
+                    "value": row["count"],
+                }
+            )
 
         summary_df = pd.DataFrame(summary_rows)
 
@@ -266,8 +360,17 @@ class K2DetectorQualityGatedBroaderCachedFailedDownstreamReport:
             "quarantined_winners_csv": quarantined_winners_csv,
             "best_winners_csv": best_winners_csv,
             "winners_total": winners_total,
-            "winners_in_best": winners_in_best,
-            "winners_in_quarantine": winners_in_quarantine,
+            "winners_total_unique": winners_total,
+            "winners_in_best": winners_with_any_best,
+            "winners_in_quarantine": winners_with_any_quarantine,
+            "winners_in_best_only": winners_in_best_only,
+            "winners_in_quarantine_only": winners_in_quarantine_only,
+            "winners_in_both": winners_in_both,
+            "winners_in_neither": winners_in_neither,
             "downstream_conversion_rate": downstream_conversion_rate,
+            "corrected_downstream_conversion_rate": downstream_conversion_rate,
+            "corrected_downstream_conversion_numerator": downstream_conversion_numerator,
+            "corrected_downstream_conversion_denominator": downstream_conversion_denominator,
+            "winners_in_both_examples": overlap_examples,
             "top_failure_reasons": top_reasons,
         }

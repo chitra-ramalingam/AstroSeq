@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import local
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
@@ -82,6 +84,7 @@ class K2ShortlistPeriodRunner:
             str(K2ShortlistPeriodConfig.PRECISION_FIRST_MODE_NAME),
             str(K2ShortlistPeriodConfig.HIGH_RECALL_MODE_NAME),
             str(K2ShortlistPeriodConfig.THRESHOLD_RELAXED_MODE_NAME),
+            str(K2ShortlistPeriodConfig.SCALE_VALIDATION_CONDITIONAL_MCC2_MODE_NAME),
         ]
 
     @classmethod
@@ -107,6 +110,21 @@ class K2ShortlistPeriodRunner:
                 "MIN_CLUSTER_COUNT": int(K2ShortlistPeriodConfig.MANUAL_REVIEW_CLUSTER_COUNT_EQ),
                 "CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE": K2ShortlistPeriodConfig.THRESHOLD_RELAXED_CLUSTER2_MIN_HIT_RATE_SHAPE,
                 "CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE": K2ShortlistPeriodConfig.THRESHOLD_RELAXED_CLUSTER2_MIN_SOFT_HIT_RATE,
+            }
+        if resolved == str(K2ShortlistPeriodConfig.SCALE_VALIDATION_CONDITIONAL_MCC2_MODE_NAME):
+            return {
+                "OPERATING_MODE": resolved,
+                "MIN_CLUSTER_COUNT": int(K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT),
+                "CONDITIONAL_MIN_CLUSTER_COUNT_RELAX_ENABLED": True,
+                "CONDITIONAL_MIN_CLUSTER_COUNT_RELAX_TO": int(K2ShortlistPeriodConfig.MANUAL_REVIEW_CLUSTER_COUNT_EQ),
+                "CONDITIONAL_MIN_CLUSTER_COUNT_MIN_EVENTS_AFTER_FILTERS": int(
+                    K2ShortlistPeriodConfig.CONDITIONAL_MIN_CLUSTER_COUNT_MIN_EVENTS_AFTER_FILTERS
+                ),
+                "CONDITIONAL_MIN_CLUSTER_COUNT_MIN_HIST_IN_RANGE": int(
+                    K2ShortlistPeriodConfig.CONDITIONAL_MIN_CLUSTER_COUNT_MIN_HIST_IN_RANGE
+                ),
+                "CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE": K2ShortlistPeriodConfig.CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE,
+                "CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE": K2ShortlistPeriodConfig.CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE,
             }
         raise ValueError(
             f"Unsupported operating mode {mode!r}; expected one of {cls._operating_mode_choices()}."
@@ -210,6 +228,14 @@ class K2ShortlistPeriodRunner:
                 f"{K2ShortlistPeriodConfig.CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE}."
             ),
         )
+        p.add_argument(
+            "--max-workers",
+            "--max_workers",
+            dest="max_workers",
+            type=int,
+            default=None,
+            help="Maximum concurrent per-EPIC workers for shortlist period processing.",
+        )
         return p
 
     @classmethod
@@ -237,12 +263,323 @@ class K2ShortlistPeriodRunner:
             config_kwargs["CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE"] = float(args.cluster2_min_hit_rate_shape)
         if args.cluster2_min_soft_hit_rate is not None:
             config_kwargs["CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE"] = float(args.cluster2_min_soft_hit_rate)
+        if args.max_workers is not None:
+            config_kwargs["MAX_WORKERS"] = int(args.max_workers)
         config = K2ShortlistPeriodConfig(**config_kwargs)
         return cls(config=config).run()
 
     def __init__(self, config: Optional[K2ShortlistPeriodConfig] = None) -> None:
         self.config = config if config is not None else K2ShortlistPeriodConfig()
         self._period_file_re = re.compile(r"^period_([0-9]+(?:\.[0-9]+)?)_(hits|misses|uncovered)\.csv$", flags=re.IGNORECASE)
+        self._thread_local = local()
+
+    def _max_workers(self) -> int:
+        return int(max(1, int(getattr(self.config, "MAX_WORKERS", 1))))
+
+    def _get_thread_validation_context(self) -> Tuple[K2_NoiseHandler, K2Validation_Prediction, K2SNR]:
+        context = getattr(self._thread_local, "validation_context", None)
+        if context is None:
+            context = (
+                K2_NoiseHandler(quality_strict=True),
+                K2Validation_Prediction(),
+                K2SNR(),
+            )
+            self._thread_local.validation_context = context
+        return context
+
+    def _process_selected_query(
+        self,
+        *,
+        index_1based: int,
+        total_selected: int,
+        query: str,
+        epic_dir_overrides: Dict[str, str],
+        validation_enabled: bool,
+    ) -> Dict[str, Any]:
+        cfg = self.config
+        epic_id = self._extract_epic(query)
+        epic_folder = f"EPIC_{epic_id}" if epic_id is not None else None
+        epic_dir_override = epic_dir_overrides.get(str(epic_id), "") if epic_id is not None else ""
+        resolved_epic_dir, events_path = (
+            self._resolve_events_path(epics_dir=cfg.epics_dir_path, epic_folder=epic_folder, epic_dir_override=epic_dir_override)
+            if epic_folder is not None
+            else (Path(""), None)
+        )
+        events_exists = bool(events_path is not None and events_path.exists())
+
+        if index_1based <= 5:
+            print(
+                f"[K2ShortlistPeriodRunner][debug] "
+                f"{query} -> {epic_id} -> {events_path} -> {events_exists}"
+            )
+
+        run_counts = {"cache_hits": 0, "cache_misses": 0, "downloads_done": 0, "validations_run": 0}
+        summary_rows: List[Dict[str, Any]] = []
+        inference_failures: Dict[str, Dict[str, Any]] = {}
+
+        if epic_id is None:
+            print(f"[{index_1based}/{total_selected}] EPIC ? query={query} -> skip (cannot parse EPIC)")
+            summary_rows.append(self._summary_row(epic=str(query), query=str(query), reason="cannot_parse_epic"))
+            return {
+                "summary_rows": summary_rows,
+                "inference_failures": inference_failures,
+                "run_counts": run_counts,
+            }
+
+        epic_dir = resolved_epic_dir
+        if not events_exists:
+            print(f"[{index_1based}/{total_selected}] EPIC {epic_id} -> skip (missing {events_path})")
+            summary_rows.append(self._summary_row(epic=str(epic_id), query=str(query), reason="missing_events_csv"))
+            return {
+                "summary_rows": summary_rows,
+                "inference_failures": inference_failures,
+                "run_counts": run_counts,
+            }
+
+        events_raw_df = self._read_csv(events_path)
+        n_events_raw = int(len(events_raw_df))
+        events_df = self._filter_events_for_periods(events_raw_df)
+        n_events_after = int(len(events_df))
+        print(
+            f"[{index_1based}/{total_selected}] EPIC {epic_id} "
+            f"n_events_raw={n_events_raw} n_events_after_filters={n_events_after}"
+        )
+
+        if n_events_after == 0:
+            summary_rows.append(
+                self._summary_row(
+                    epic=str(epic_id),
+                    query=str(query),
+                    reason="events_filtered_to_zero",
+                    n_events_raw=int(n_events_raw),
+                    n_events_after_filters=int(n_events_after),
+                )
+            )
+            return {
+                "summary_rows": summary_rows,
+                "inference_failures": inference_failures,
+                "run_counts": run_counts,
+            }
+
+        max_period = float(self._effective_max_period_days())
+        infer_min_hits = 1
+        infer_tol_frac = 0.01
+        _, hist_df = infer_periods_from_events(
+            events_df=events_df,
+            max_period=max(max_period, 1e-6),
+            min_hits=infer_min_hits,
+            tol_frac=infer_tol_frac,
+        )
+
+        if len(hist_df) == 0:
+            if n_events_after < 2:
+                detail = "insufficient_events_for_period_inference"
+            else:
+                detail = "infer_periods_from_events_returned_empty_hist"
+            failure_payload = self._log_period_inference_failure(
+                epic_id=str(epic_id),
+                query=str(query),
+                n_events_raw=int(n_events_raw),
+                n_events_after_filters=int(n_events_after),
+                max_period_days=float(max_period),
+                min_hits=int(infer_min_hits),
+                tol_frac=float(infer_tol_frac),
+                reason="no_cluster_periods",
+                failure_category="empty_histogram" if n_events_after >= 2 else "insufficient_events",
+                detail=detail,
+            )
+            inference_failures[str(epic_id)] = failure_payload
+            summary_rows.append(
+                self._summary_row(
+                    epic=str(epic_id),
+                    query=str(query),
+                    reason="no_cluster_periods",
+                    n_events_raw=int(n_events_raw),
+                    n_events_after_filters=int(n_events_after),
+                )
+            )
+            print(f"[{index_1based}/{total_selected}] EPIC {epic_id} -> no period candidates from t_mid clustering")
+            return {
+                "summary_rows": summary_rows,
+                "inference_failures": inference_failures,
+                "run_counts": run_counts,
+            }
+
+        candidate_filter_policy = self._resolve_candidate_filter_policy(
+            hist_df=hist_df,
+            n_events_after_filters=int(n_events_after),
+            min_period_days=float(getattr(cfg, "MIN_PERIOD_DAYS", 0.5)),
+            max_period_days=float(max_period),
+        )
+        candidate_hist = self._filter_candidate_period_rows(
+            hist_df=hist_df,
+            min_period_days=float(getattr(cfg, "MIN_PERIOD_DAYS", 0.5)),
+            max_period_days=float(max_period),
+            min_cluster_count=int(candidate_filter_policy["effective_min_cluster_count"]),
+            top_k=int(getattr(cfg, "TOP_K_PERIODS", getattr(cfg, "VALIDATION_TOP_K", 3))),
+        )
+        if len(candidate_hist) == 0:
+            hist_num = candidate_filter_policy["hist_num"].copy()
+            min_p = float(self._as_float(getattr(cfg, "MIN_PERIOD_DAYS", 0.5), default=0.5))
+            max_p = float(max_period)
+            total_hist = int(len(hist_num))
+            finite_period = int(hist_num["period"].notna().sum())
+            in_range = int(candidate_filter_policy["hist_in_range"])
+            pass_cluster = int(
+                (
+                    hist_num["count_hits"] >= int(candidate_filter_policy["effective_min_cluster_count"])
+                ).sum()
+            )
+            pass_all = int(
+                (
+                    hist_num["period"].notna()
+                    & hist_num["count_hits"].notna()
+                    & (hist_num["period"] >= min_p)
+                    & (hist_num["period"] <= max_p)
+                    & (hist_num["count_hits"] >= int(candidate_filter_policy["effective_min_cluster_count"]))
+                ).sum()
+            )
+            detail = "all_candidate_periods_failed_filters"
+            if pass_cluster == 0:
+                detail = "all_candidate_periods_below_min_cluster_count"
+            elif in_range == 0:
+                detail = "all_candidate_periods_outside_period_bounds"
+            failure_payload = self._log_period_inference_failure(
+                epic_id=str(epic_id),
+                query=str(query),
+                n_events_raw=int(n_events_raw),
+                n_events_after_filters=int(n_events_after),
+                max_period_days=float(max_period),
+                min_hits=int(infer_min_hits),
+                tol_frac=float(infer_tol_frac),
+                reason="no_cluster_periods",
+                failure_category="candidate_filter_rejection",
+                detail=detail,
+                extra={
+                    "hist_total": total_hist,
+                    "hist_finite_period": finite_period,
+                    "hist_in_period_range": in_range,
+                    "hist_pass_cluster_count": pass_cluster,
+                    "hist_pass_all_filters": pass_all,
+                    "base_min_cluster_count": int(candidate_filter_policy["base_min_cluster_count"]),
+                    "effective_min_cluster_count": int(candidate_filter_policy["effective_min_cluster_count"]),
+                    "conditional_min_cluster_count_enabled": bool(
+                        candidate_filter_policy["conditional_min_cluster_count_enabled"]
+                    ),
+                    "conditional_min_cluster_count_applied": bool(
+                        candidate_filter_policy["conditional_min_cluster_count_applied"]
+                    ),
+                    "conditional_relax_to": int(candidate_filter_policy["conditional_relax_to"]),
+                    "conditional_min_events_after_filters": int(
+                        candidate_filter_policy["conditional_min_events_after_filters"]
+                    ),
+                    "conditional_min_hist_in_range": int(candidate_filter_policy["conditional_min_hist_in_range"]),
+                },
+            )
+            inference_failures[str(epic_id)] = failure_payload
+            summary_rows.append(
+                self._summary_row(
+                    epic=str(epic_id),
+                    query=str(query),
+                    reason="no_cluster_periods",
+                    n_events_raw=int(n_events_raw),
+                    n_events_after_filters=int(n_events_after),
+                )
+            )
+            print(
+                f"[{index_1based}/{total_selected}] EPIC {epic_id} -> no candidates after "
+                f"period/count filters (minP={cfg.MIN_PERIOD_DAYS}, maxP={max_period}, "
+                f"min_cluster={candidate_filter_policy['effective_min_cluster_count']})"
+            )
+            return {
+                "summary_rows": summary_rows,
+                "inference_failures": inference_failures,
+                "run_counts": run_counts,
+            }
+
+        epic_rows: List[Dict[str, Any]] = []
+        for _, h in candidate_hist.iterrows():
+            p = self._as_float(h.get("period"))
+            if not np.isfinite(p) or p <= 0:
+                continue
+            cluster_count = int(pd.to_numeric(pd.Series([h.get("count_hits")]), errors="coerce").fillna(0).iloc[0])
+            _cluster_count_exact, cluster_center_phase = self._phase_cluster_score_quiet(
+                events_df=events_df,
+                period=float(p),
+                tol_phase=float(cfg.PERIOD_TOL_PHASE),
+            )
+            epic_rows.append(
+                self._summary_row(
+                    epic=str(epic_id),
+                    query=str(query),
+                    reason="cluster_only",
+                    n_events_raw=int(n_events_raw),
+                    n_events_after_filters=int(n_events_after),
+                    P=float(p),
+                    cluster_count=int(cluster_count),
+                    cluster_center_phase=float(cluster_center_phase),
+                    n_predicted=0,
+                    n_covered=0,
+                    coverage_rate=float("nan"),
+                    hit_rate_snr=0.0,
+                    hit_rate_shape=0.0,
+                    soft_hit_rate=0.0,
+                    n_windows_with_no_candidates=0,
+                )
+            )
+
+        top_periods = [float(x) for x in candidate_hist["period"].to_numpy(dtype=float) if np.isfinite(x) and (x > 0)]
+        validation_context_enabled = bool(validation_enabled)
+        if validation_context_enabled and len(top_periods) > 0:
+            try:
+                validation_handler, validation_engine, validation_snr = self._get_thread_validation_context()
+            except Exception as exc:
+                validation_context_enabled = False
+                print(
+                    f"[K2ShortlistPeriodRunner] validation init failed in worker: "
+                    f"{type(exc).__name__}: {exc} -> cluster-only mode"
+                )
+            if validation_context_enabled:
+                cluster_reason, validated_rows, val_counts = self._validate_top_periods_from_cache(
+                    query=str(query),
+                    events_df=events_df,
+                    cluster_rows=epic_rows,
+                    top_periods=top_periods,
+                    handler=validation_handler,
+                    validator=validation_engine,
+                    snr=validation_snr,
+                )
+                for k in run_counts:
+                    run_counts[k] += int(val_counts.get(k, 0))
+                if cluster_reason != "cluster_only":
+                    for row in epic_rows:
+                        row["reason"] = cluster_reason
+                epic_rows.extend(validated_rows)
+
+        if len(epic_rows) == 0:
+            epic_rows.append(
+                self._summary_row(
+                    epic=str(epic_id),
+                    query=str(query),
+                    reason="cluster_only_no_valid_period",
+                    n_events_raw=int(n_events_raw),
+                    n_events_after_filters=int(n_events_after),
+                )
+            )
+
+        summary_rows.extend(epic_rows)
+        best = self._select_best_row(epic_rows)
+        print(
+            f"[{index_1based}/{total_selected}] EPIC {epic_id} "
+            f"candidate_period_rows={len(epic_rows)} "
+            f"best_P={self._as_float(best.get('P')):.6f} "
+            f"reason={best.get('reason', '')}"
+        )
+        return {
+            "summary_rows": summary_rows,
+            "inference_failures": inference_failures,
+            "run_counts": run_counts,
+        }
 
     def _mcc_policy_mode(self) -> str:
         requested_mode = str(getattr(self.config, "OPERATING_MODE", "") or "").strip()
@@ -274,9 +611,31 @@ class K2ShortlistPeriodRunner:
                 "MIN_CLUSTER_COUNT=2 with relaxed cluster_count==2 guardrails is a threshold-relaxed experiment. "
                 "Use it only to measure whether additional recovery comes from threshold-side relaxation after MCC, and keep manual review enabled."
             )
+        if mode == str(getattr(self.config, "SCALE_VALIDATION_CONDITIONAL_MCC2_MODE_NAME", "scale_validation_conditional_mcc2_experiment")):
+            return (
+                "MIN_CLUSTER_COUNT=3 remains the default, but scale-validation allows an experimental MCC=2 carve-out "
+                "only when n_events_after_filters>=4 and hist_in_period_range>=2. Existing cluster_count==2 guardrails "
+                "and manual review remain unchanged."
+            )
         return (
             "Custom MIN_CLUSTER_COUNT in use; compare against the MCC=3 default before promoting any threshold change."
         )
+
+    def _conditional_min_cluster_count_params(self) -> Dict[str, Any]:
+        cfg = self.config
+        return {
+            "enabled": bool(getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_RELAX_ENABLED", False)),
+            "base": int(getattr(cfg, "MIN_CLUSTER_COUNT", K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT)),
+            "relax_to": int(
+                getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_RELAX_TO", getattr(cfg, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2))
+            ),
+            "min_events_after_filters": int(
+                getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_MIN_EVENTS_AFTER_FILTERS", 4)
+            ),
+            "min_hist_in_range": int(
+                getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_MIN_HIST_IN_RANGE", 2)
+            ),
+        }
 
     @staticmethod
     def _sanitize_run_id(value: str) -> str:
@@ -669,6 +1028,42 @@ class K2ShortlistPeriodRunner:
 
         work = work.sort_values(["count_hits", "pair_count", "period"], ascending=[False, False, True])
         return work.head(max(0, int(top_k))).reset_index(drop=True)
+
+    def _resolve_candidate_filter_policy(
+        self,
+        *,
+        hist_df: pd.DataFrame,
+        n_events_after_filters: int,
+        min_period_days: float,
+        max_period_days: float,
+    ) -> Dict[str, Any]:
+        hist_num = hist_df.copy()
+        for c in ["period", "count_hits"]:
+            hist_num[c] = pd.to_numeric(hist_num.get(c, np.nan), errors="coerce")
+        in_range = int(((hist_num["period"] >= float(min_period_days)) & (hist_num["period"] <= float(max_period_days))).sum())
+
+        conditional = self._conditional_min_cluster_count_params()
+        effective_min_cluster_count = int(conditional["base"])
+        carveout_applied = False
+        if (
+            conditional["enabled"]
+            and int(n_events_after_filters) >= int(conditional["min_events_after_filters"])
+            and int(in_range) >= int(conditional["min_hist_in_range"])
+        ):
+            effective_min_cluster_count = min(int(conditional["base"]), int(conditional["relax_to"]))
+            carveout_applied = effective_min_cluster_count < int(conditional["base"])
+
+        return {
+            "hist_num": hist_num,
+            "hist_in_range": int(in_range),
+            "conditional_min_cluster_count_enabled": bool(conditional["enabled"]),
+            "conditional_min_cluster_count_applied": bool(carveout_applied),
+            "base_min_cluster_count": int(conditional["base"]),
+            "effective_min_cluster_count": int(effective_min_cluster_count),
+            "conditional_relax_to": int(conditional["relax_to"]),
+            "conditional_min_events_after_filters": int(conditional["min_events_after_filters"]),
+            "conditional_min_hist_in_range": int(conditional["min_hist_in_range"]),
+        }
 
     @staticmethod
     def _nearest_cluster_row(period: float, cluster_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -2322,6 +2717,18 @@ class K2ShortlistPeriodRunner:
                 "infer_tol_frac": float(tol_frac),
                 "min_cluster_count": int(getattr(cfg, "MIN_CLUSTER_COUNT", 3)),
                 "top_k_periods": int(getattr(cfg, "TOP_K_PERIODS", getattr(cfg, "VALIDATION_TOP_K", 3))),
+                "conditional_min_cluster_count_enabled": bool(
+                    getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_RELAX_ENABLED", False)
+                ),
+                "conditional_min_cluster_count_relax_to": int(
+                    getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_RELAX_TO", getattr(cfg, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2))
+                ),
+                "conditional_min_cluster_count_min_events_after_filters": int(
+                    getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_MIN_EVENTS_AFTER_FILTERS", 4)
+                ),
+                "conditional_min_cluster_count_min_hist_in_range": int(
+                    getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_MIN_HIST_IN_RANGE", 2)
+                ),
             },
         }
         if extra is not None:
@@ -2368,6 +2775,7 @@ class K2ShortlistPeriodRunner:
         summary_rows: List[Dict[str, Any]] = []
         inference_failures_by_epic: Dict[str, Dict[str, Any]] = {}
         run_counts = {"cache_hits": 0, "cache_misses": 0, "downloads_done": 0, "validations_run": 0}
+        max_workers = self._max_workers()
         validation_enabled = bool(getattr(cfg, "ENABLE_VALIDATION", True))
         validation_handler: Optional[K2_NoiseHandler] = None
         validation_engine: Optional[K2Validation_Prediction] = None
@@ -2399,236 +2807,46 @@ class K2ShortlistPeriodRunner:
         )
         print(f"[K2ShortlistPeriodRunner] mcc_policy_mode={self._mcc_policy_mode()}")
         print(f"[K2ShortlistPeriodRunner] note: {self._mcc_policy_note()}")
+        if max_workers > 1:
+            print(f"[K2ShortlistPeriodRunner] max_workers={max_workers}")
         if getattr(cfg, "CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE", None) is not None or getattr(cfg, "CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE", None) is not None:
             print(
                 f"[K2ShortlistPeriodRunner] cluster2_guardrails "
                 f"hit_rate_shape_min={getattr(cfg, 'CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE', None)} "
                 f"soft_hit_rate_min={getattr(cfg, 'CLUSTER2_VALIDATED_MIN_SOFT_HIT_RATE', None)}"
             )
-        for i, query in enumerate(selected, start=1):
-            epic_id = self._extract_epic(query)
-            epic_folder = f"EPIC_{epic_id}" if epic_id is not None else None
-            epic_dir_override = epic_dir_overrides.get(str(epic_id), "") if epic_id is not None else ""
-            resolved_epic_dir, events_path = (
-                self._resolve_events_path(epics_dir=epics_dir, epic_folder=epic_folder, epic_dir_override=epic_dir_override)
-                if epic_folder is not None
-                else (Path(""), None)
-            )
-            events_exists = bool(events_path is not None and events_path.exists())
-
-            if i <= 5:
-                print(
-                    f"[K2ShortlistPeriodRunner][debug] "
-                    f"{query} -> {epic_id} -> {events_path} -> {events_exists}"
-                )
-
-            if epic_id is None:
-                print(f"[{i}/{len(selected)}] EPIC ? query={query} -> skip (cannot parse EPIC)")
-                summary_rows.append(self._summary_row(epic=str(query), query=str(query), reason="cannot_parse_epic"))
-                continue
-
-            epic_dir = resolved_epic_dir
-            if not events_exists:
-                print(f"[{i}/{len(selected)}] EPIC {epic_id} -> skip (missing {events_path})")
-                summary_rows.append(self._summary_row(epic=str(epic_id), query=str(query), reason="missing_events_csv"))
-                continue
-
-            events_raw_df = self._read_csv(events_path)
-            n_events_raw = int(len(events_raw_df))
-            events_df = self._filter_events_for_periods(events_raw_df)
-            n_events_after = int(len(events_df))
-            print(
-                f"[{i}/{len(selected)}] EPIC {epic_id} "
-                f"n_events_raw={n_events_raw} n_events_after_filters={n_events_after}"
-            )
-
-            if n_events_after == 0:
-                summary_rows.append(
-                    self._summary_row(
-                        epic=str(epic_id),
-                        query=str(query),
-                        reason="events_filtered_to_zero",
-                        n_events_raw=int(n_events_raw),
-                        n_events_after_filters=int(n_events_after),
+        if max_workers > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(
+                        self._process_selected_query,
+                        index_1based=i,
+                        total_selected=len(selected),
+                        query=query,
+                        epic_dir_overrides=epic_dir_overrides,
+                        validation_enabled=validation_enabled,
                     )
+                    for i, query in enumerate(selected, start=1)
+                ]
+                for future in futures:
+                    result = future.result()
+                    summary_rows.extend(result["summary_rows"])
+                    inference_failures_by_epic.update(result["inference_failures"])
+                    for key in run_counts:
+                        run_counts[key] += int(result["run_counts"].get(key, 0))
+        else:
+            for i, query in enumerate(selected, start=1):
+                result = self._process_selected_query(
+                    index_1based=i,
+                    total_selected=len(selected),
+                    query=query,
+                    epic_dir_overrides=epic_dir_overrides,
+                    validation_enabled=validation_enabled,
                 )
-                continue
-
-            max_period = float(self._effective_max_period_days())
-            infer_min_hits = 1
-            infer_tol_frac = 0.01
-            _, hist_df = infer_periods_from_events(
-                events_df=events_df,
-                max_period=max(max_period, 1e-6),
-                min_hits=infer_min_hits,
-                tol_frac=infer_tol_frac,
-            )
-
-            if len(hist_df) == 0:
-                if n_events_after < 2:
-                    detail = "insufficient_events_for_period_inference"
-                else:
-                    detail = "infer_periods_from_events_returned_empty_hist"
-                failure_payload = self._log_period_inference_failure(
-                    epic_id=str(epic_id),
-                    query=str(query),
-                    n_events_raw=int(n_events_raw),
-                    n_events_after_filters=int(n_events_after),
-                    max_period_days=float(max_period),
-                    min_hits=int(infer_min_hits),
-                    tol_frac=float(infer_tol_frac),
-                    reason="no_cluster_periods",
-                    failure_category="empty_histogram" if n_events_after >= 2 else "insufficient_events",
-                    detail=detail,
-                )
-                inference_failures_by_epic[str(epic_id)] = failure_payload
-                summary_rows.append(
-                    self._summary_row(
-                        epic=str(epic_id),
-                        query=str(query),
-                        reason="no_cluster_periods",
-                        n_events_raw=int(n_events_raw),
-                        n_events_after_filters=int(n_events_after),
-                    )
-                )
-                print(f"[{i}/{len(selected)}] EPIC {epic_id} -> no period candidates from t_mid clustering")
-                continue
-
-            candidate_hist = self._filter_candidate_period_rows(
-                hist_df=hist_df,
-                min_period_days=float(getattr(cfg, "MIN_PERIOD_DAYS", 0.5)),
-                max_period_days=float(max_period),
-                min_cluster_count=int(getattr(cfg, "MIN_CLUSTER_COUNT", 3)),
-                top_k=int(getattr(cfg, "TOP_K_PERIODS", getattr(cfg, "VALIDATION_TOP_K", 3))),
-            )
-            if len(candidate_hist) == 0:
-                hist_num = hist_df.copy()
-                for c in ["period", "count_hits"]:
-                    hist_num[c] = pd.to_numeric(hist_num.get(c, np.nan), errors="coerce")
-                min_p = float(self._as_float(getattr(cfg, "MIN_PERIOD_DAYS", 0.5), default=0.5))
-                max_p = float(max_period)
-                total_hist = int(len(hist_num))
-                finite_period = int(hist_num["period"].notna().sum())
-                in_range = int(((hist_num["period"] >= min_p) & (hist_num["period"] <= max_p)).sum())
-                pass_cluster = int((hist_num["count_hits"] >= int(getattr(cfg, "MIN_CLUSTER_COUNT", 3))).sum())
-                pass_all = int(
-                    (
-                        hist_num["period"].notna()
-                        & hist_num["count_hits"].notna()
-                        & (hist_num["period"] >= min_p)
-                        & (hist_num["period"] <= max_p)
-                        & (hist_num["count_hits"] >= int(getattr(cfg, "MIN_CLUSTER_COUNT", 3)))
-                    ).sum()
-                )
-                detail = "all_candidate_periods_failed_filters"
-                if pass_cluster == 0:
-                    detail = "all_candidate_periods_below_min_cluster_count"
-                elif in_range == 0:
-                    detail = "all_candidate_periods_outside_period_bounds"
-                failure_payload = self._log_period_inference_failure(
-                    epic_id=str(epic_id),
-                    query=str(query),
-                    n_events_raw=int(n_events_raw),
-                    n_events_after_filters=int(n_events_after),
-                    max_period_days=float(max_period),
-                    min_hits=int(infer_min_hits),
-                    tol_frac=float(infer_tol_frac),
-                    reason="no_cluster_periods",
-                    failure_category="candidate_filter_rejection",
-                    detail=detail,
-                    extra={
-                        "hist_total": total_hist,
-                        "hist_finite_period": finite_period,
-                        "hist_in_period_range": in_range,
-                        "hist_pass_cluster_count": pass_cluster,
-                        "hist_pass_all_filters": pass_all,
-                    },
-                )
-                inference_failures_by_epic[str(epic_id)] = failure_payload
-                summary_rows.append(
-                    self._summary_row(
-                        epic=str(epic_id),
-                        query=str(query),
-                        reason="no_cluster_periods",
-                        n_events_raw=int(n_events_raw),
-                        n_events_after_filters=int(n_events_after),
-                    )
-                )
-                print(
-                    f"[{i}/{len(selected)}] EPIC {epic_id} -> no candidates after "
-                    f"period/count filters (minP={cfg.MIN_PERIOD_DAYS}, maxP={max_period}, "
-                    f"min_cluster={cfg.MIN_CLUSTER_COUNT})"
-                )
-                continue
-
-            epic_rows: List[Dict[str, Any]] = []
-            for _, h in candidate_hist.iterrows():
-                p = self._as_float(h.get("period"))
-                if not np.isfinite(p) or p <= 0:
-                    continue
-                cluster_count = int(pd.to_numeric(pd.Series([h.get("count_hits")]), errors="coerce").fillna(0).iloc[0])
-                _cluster_count_exact, cluster_center_phase = self._phase_cluster_score_quiet(
-                    events_df=events_df,
-                    period=float(p),
-                    tol_phase=float(cfg.PERIOD_TOL_PHASE),
-                )
-                epic_rows.append(
-                    self._summary_row(
-                        epic=str(epic_id),
-                        query=str(query),
-                        reason="cluster_only",
-                        n_events_raw=int(n_events_raw),
-                        n_events_after_filters=int(n_events_after),
-                        P=float(p),
-                        cluster_count=int(cluster_count),
-                        cluster_center_phase=float(cluster_center_phase),
-                        n_predicted=0,
-                        n_covered=0,
-                        coverage_rate=float("nan"),
-                        hit_rate_snr=0.0,
-                        hit_rate_shape=0.0,
-                        soft_hit_rate=0.0,
-                        n_windows_with_no_candidates=0,
-                    )
-                )
-
-            top_periods = [float(x) for x in candidate_hist["period"].to_numpy(dtype=float) if np.isfinite(x) and (x > 0)]
-            if validation_enabled and len(top_periods) > 0:
-                cluster_reason, validated_rows, val_counts = self._validate_top_periods_from_cache(
-                    query=str(query),
-                    events_df=events_df,
-                    cluster_rows=epic_rows,
-                    top_periods=top_periods,
-                    handler=validation_handler,  # type: ignore[arg-type]
-                    validator=validation_engine,  # type: ignore[arg-type]
-                    snr=validation_snr,  # type: ignore[arg-type]
-                )
-                for k in run_counts:
-                    run_counts[k] += int(val_counts.get(k, 0))
-                if cluster_reason != "cluster_only":
-                    for row in epic_rows:
-                        row["reason"] = cluster_reason
-                epic_rows.extend(validated_rows)
-
-            if len(epic_rows) == 0:
-                epic_rows.append(
-                    self._summary_row(
-                        epic=str(epic_id),
-                        query=str(query),
-                        reason="cluster_only_no_valid_period",
-                        n_events_raw=int(n_events_raw),
-                        n_events_after_filters=int(n_events_after),
-                    )
-                )
-
-            summary_rows.extend(epic_rows)
-            best = self._select_best_row(epic_rows)
-            print(
-                f"[{i}/{len(selected)}] EPIC {epic_id} "
-                f"candidate_period_rows={len(epic_rows)} "
-                f"best_P={self._as_float(best.get('P')):.6f} "
-                f"reason={best.get('reason', '')}"
-            )
+                summary_rows.extend(result["summary_rows"])
+                inference_failures_by_epic.update(result["inference_failures"])
+                for key in run_counts:
+                    run_counts[key] += int(result["run_counts"].get(key, 0))
 
         df_summary_raw = pd.DataFrame(summary_rows).reindex(columns=self.SUMMARY_COLUMNS)
         print(f"[K2ShortlistPeriodRunner] df_summary_raw.shape={df_summary_raw.shape}")
@@ -2795,6 +3013,18 @@ class K2ShortlistPeriodRunner:
             "min_cluster_count": int(getattr(cfg, "MIN_CLUSTER_COUNT", K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT)),
             "default_min_cluster_count": int(K2ShortlistPeriodConfig.MIN_CLUSTER_COUNT),
             "manual_review_cluster_count_eq": int(getattr(cfg, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2)),
+            "conditional_min_cluster_count_enabled": bool(
+                getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_RELAX_ENABLED", False)
+            ),
+            "conditional_min_cluster_count_relax_to": int(
+                getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_RELAX_TO", getattr(cfg, "MANUAL_REVIEW_CLUSTER_COUNT_EQ", 2))
+            ),
+            "conditional_min_cluster_count_min_events_after_filters": int(
+                getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_MIN_EVENTS_AFTER_FILTERS", 4)
+            ),
+            "conditional_min_cluster_count_min_hist_in_range": int(
+                getattr(cfg, "CONDITIONAL_MIN_CLUSTER_COUNT_MIN_HIST_IN_RANGE", 2)
+            ),
             "cluster2_guardrail_hit_rate_shape_min": self._as_float(
                 getattr(cfg, "CLUSTER2_VALIDATED_MIN_HIT_RATE_SHAPE", float("nan"))
             ),

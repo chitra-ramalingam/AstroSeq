@@ -87,10 +87,12 @@ class K2DetectorQualityGatedBroaderCachedFailedDownstreamReportTests(unittest.Te
             best_winners_csv=best_winners_csv,
         )
 
-        self.assertEqual(int(out["winners_total"]), 3)
-        self.assertEqual(int(out["winners_in_best"]), 1)
-        self.assertEqual(int(out["winners_in_quarantine"]), 1)
-        self.assertAlmostEqual(float(out["downstream_conversion_rate"]), 1.0 / 3.0)
+        self.assertEqual(int(out["winners_total_unique"]), 3)
+        self.assertEqual(int(out["winners_in_best_only"]), 1)
+        self.assertEqual(int(out["winners_in_quarantine_only"]), 1)
+        self.assertEqual(int(out["winners_in_both"]), 0)
+        self.assertEqual(int(out["winners_in_neither"]), 1)
+        self.assertAlmostEqual(float(out["corrected_downstream_conversion_rate"]), 1.0 / 3.0)
 
         self.assertTrue(summary_csv.exists())
         self.assertTrue(quarantined_winners_csv.exists())
@@ -119,9 +121,23 @@ class K2DetectorQualityGatedBroaderCachedFailedDownstreamReportTests(unittest.Te
                 summary_df.loc[summary_df["section"] == "summary", "value"],
             )
         )
-        self.assertEqual(int(summary_map["winners_total"]), 3)
-        self.assertEqual(int(summary_map["winners_in_best"]), 1)
-        self.assertEqual(int(summary_map["winners_in_quarantine"]), 1)
+        self.assertEqual(int(summary_map["winners_total_unique"]), 3)
+        self.assertEqual(int(summary_map["winners_in_best_only"]), 1)
+        self.assertEqual(int(summary_map["winners_in_quarantine_only"]), 1)
+        self.assertEqual(int(summary_map["winners_in_both"]), 0)
+        self.assertEqual(int(summary_map["winners_in_neither"]), 1)
+        self.assertAlmostEqual(float(summary_map["corrected_downstream_conversion_rate"]), 1.0 / 3.0)
+        audit_map = dict(
+            zip(
+                summary_df.loc[summary_df["section"] == "audit", "metric"],
+                summary_df.loc[summary_df["section"] == "audit", "value"],
+            )
+        )
+        self.assertEqual(
+            str(audit_map["unique_epic_conversion_definition"]),
+            "winners_with_any_best / winners_total_unique",
+        )
+        self.assertIn("row-level", str(audit_map["row_level_overlap_interpretation"]))
 
         failure_rows = summary_df.loc[
             (summary_df["section"] == "top_failure_reasons")
@@ -129,6 +145,96 @@ class K2DetectorQualityGatedBroaderCachedFailedDownstreamReportTests(unittest.Te
         ]
         self.assertEqual(list(failure_rows["metric"]), ["no_cluster_periods"])
         self.assertEqual(int(failure_rows.iloc[0]["value"]), 1)
+
+    def test_report_separates_overlap_from_quarantine_only_counts(self) -> None:
+        winners_csv = self.case_dir / "detector_quality_gated_broader_winners.csv"
+        best_csv = self.case_dir / "Apr1_period_shortlist_best.csv"
+        quarantine_csv = self.case_dir / "Apr1_period_shortlist_quarantine.csv"
+        funnel_csv = self.case_dir / "Apr1_epic_funnel_reasons.csv"
+        summary_csv = self.case_dir / "detector_quality_gated_broader_downstream_summary.csv"
+        quarantined_winners_csv = self.case_dir / "detector_quality_gated_broader_quarantined_winners.csv"
+        best_winners_csv = self.case_dir / "detector_quality_gated_broader_best_winners.csv"
+
+        pd.DataFrame(
+            [
+                {"epic_id": "EPIC_101"},
+                {"epic_id": "EPIC_102"},
+                {"epic_id": "EPIC_103"},
+            ]
+        ).to_csv(winners_csv, index=False)
+        pd.DataFrame(
+            [
+                {"epic": "101", "query": "EPIC 101", "P": 7.5, "reason": "validated", "manual_review_required": False},
+                {"epic": "102", "query": "EPIC 102", "P": 3.0, "reason": "cluster_only", "manual_review_required": False},
+            ]
+        ).to_csv(best_csv, index=False)
+        pd.DataFrame(
+            [
+                {
+                    "epic_id": "EPIC_102",
+                    "query": "EPIC 102",
+                    "reason": "validated_guardrail_reject",
+                    "failure_category": "cluster2_guardrail_rejection",
+                    "shortlist_rejection_reason": "cluster2_guardrail_rejection",
+                },
+                {
+                    "epic_id": "EPIC_103",
+                    "query": "EPIC 103",
+                    "reason": "P_found_but_rejected",
+                    "failure_category": "candidate_filter_rejection",
+                    "shortlist_rejection_reason": "all_candidate_periods_below_min_cluster_count",
+                },
+            ]
+        ).to_csv(quarantine_csv, index=False)
+        pd.DataFrame(
+            [
+                {"epic_id": "102", "query": "EPIC 102", "terminal_reason": "validated_guardrail_reject"},
+                {"epic_id": "103", "query": "EPIC 103", "terminal_reason": "no_cluster_periods"},
+            ]
+        ).to_csv(funnel_csv, index=False)
+
+        out = K2DetectorQualityGatedBroaderCachedFailedDownstreamReport().run(
+            winners_csv=winners_csv,
+            best_csv=best_csv,
+            quarantine_csv=quarantine_csv,
+            funnel_csv=funnel_csv,
+            summary_csv=summary_csv,
+            quarantined_winners_csv=quarantined_winners_csv,
+            best_winners_csv=best_winners_csv,
+        )
+
+        self.assertEqual(int(out["winners_total_unique"]), 3)
+        self.assertEqual(int(out["winners_in_best_only"]), 1)
+        self.assertEqual(int(out["winners_in_quarantine_only"]), 1)
+        self.assertEqual(int(out["winners_in_both"]), 1)
+        self.assertEqual(int(out["winners_in_neither"]), 0)
+        self.assertAlmostEqual(float(out["corrected_downstream_conversion_rate"]), 2.0 / 3.0)
+        self.assertEqual(list(out["winners_in_both_examples"]), ["102"])
+
+        quarantined_df = pd.read_csv(quarantined_winners_csv)
+        self.assertEqual(list(quarantined_df["epic_id_norm"]), [103])
+        self.assertEqual(list(quarantined_df["failure_category"]), ["candidate_filter_rejection"])
+
+        summary_df = pd.read_csv(summary_csv)
+        summary_map = dict(
+            zip(
+                summary_df.loc[summary_df["section"] == "summary", "metric"],
+                summary_df.loc[summary_df["section"] == "summary", "value"],
+            )
+        )
+        self.assertEqual(int(summary_map["winners_total_unique"]), 3)
+        self.assertEqual(int(summary_map["winners_in_best_only"]), 1)
+        self.assertEqual(int(summary_map["winners_in_quarantine_only"]), 1)
+        self.assertEqual(int(summary_map["winners_in_both"]), 1)
+        self.assertEqual(int(summary_map["winners_in_neither"]), 0)
+        self.assertAlmostEqual(float(summary_map["corrected_downstream_conversion_rate"]), 2.0 / 3.0)
+        audit_map = dict(
+            zip(
+                summary_df.loc[summary_df["section"] == "audit", "metric"],
+                summary_df.loc[summary_df["section"] == "audit", "value"],
+            )
+        )
+        self.assertEqual(str(audit_map["winners_in_both_example_epics"]), "102")
 
     def test_report_fails_clearly_when_required_columns_are_missing(self) -> None:
         winners_csv = self.case_dir / "detector_quality_gated_broader_winners.csv"

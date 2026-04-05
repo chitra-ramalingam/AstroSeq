@@ -18,6 +18,7 @@ class K2CachedFailedBroaderDownstreamRunner:
     DEFAULT_MERGED_BATCH_CSV = "merged_batch_results.csv"
     DEFAULT_INPUT_MANIFEST_CSV = "downstream_input_shards.csv"
     DEFAULT_OPERATING_MODE = str(K2ShortlistPeriodConfig.PRECISION_FIRST_MODE_NAME)
+    DEFAULT_MAX_WORKERS = 8
 
     @classmethod
     def build_parser(cls) -> argparse.ArgumentParser:
@@ -30,6 +31,7 @@ class K2CachedFailedBroaderDownstreamRunner:
         p.add_argument("--shards-root", type=Path, default=cls.DEFAULT_QUALITY_GATED_SHARDS_ROOT)
         p.add_argument("--out-dir", type=Path, default=cls.DEFAULT_OUT_DIR)
         p.add_argument("--operating-mode", type=str, default=cls.DEFAULT_OPERATING_MODE, choices=K2ShortlistPeriodRunner._operating_mode_choices())
+        p.add_argument("--max-workers", type=int, default=cls.DEFAULT_MAX_WORKERS)
         p.add_argument(
             "--disable-validation",
             action="store_true",
@@ -44,6 +46,7 @@ class K2CachedFailedBroaderDownstreamRunner:
             shards_root=Path(args.shards_root),
             out_dir=Path(args.out_dir),
             operating_mode=str(args.operating_mode),
+            max_workers=int(args.max_workers),
             disable_validation=bool(args.disable_validation),
         )
 
@@ -120,6 +123,7 @@ class K2CachedFailedBroaderDownstreamRunner:
         shards_root: Path,
         out_dir: Path,
         operating_mode: str = DEFAULT_OPERATING_MODE,
+        max_workers: int = DEFAULT_MAX_WORKERS,
         disable_validation: bool = False,
     ) -> Dict[str, Any]:
         shard_dirs = self._discover_shard_dirs(shards_root=shards_root)
@@ -150,6 +154,7 @@ class K2CachedFailedBroaderDownstreamRunner:
             "CACHE_ONLY_FIRST": True,
             "DOWNLOAD_IF_CACHE_MISS": False,
             "ENABLE_VALIDATION": not bool(disable_validation),
+            "MAX_WORKERS": int(max_workers),
         }
         downstream_out = K2ShortlistPeriodRunner(config=K2ShortlistPeriodConfig(**config_kwargs)).run()
         return {
