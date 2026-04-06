@@ -33,6 +33,10 @@ from src.Classifiers.K2.Batch.K2DetectorQualityGatedScaleValidationConditionalMc
 from src.Classifiers.K2.Batch.K2DetectorQualityGatedConditionalMcc2LimitedBroaderValidation import (
     K2DetectorQualityGatedConditionalMcc2LimitedBroaderValidation,
 )
+from src.Classifiers.K2.Batch.K2KnownConfirmedFalseNegativeAudit import K2KnownConfirmedFalseNegativeAudit
+from src.Classifiers.K2.Batch.K2ConfirmedPlanetRecallAudit import K2ConfirmedPlanetRecallAudit
+from src.Classifiers.K2.Batch.K2ConfirmedPlanetCoverageAudit import K2ConfirmedPlanetCoverageAudit
+from src.Classifiers.K2.Batch.K2StageBPopulationManifest import K2StageBPopulationManifest
 from src.Classifiers.CnnModel import CnnModel
 from src.Classifiers.LargeWindow.LargeWindow_Processor import LargeWindowCnnModel
 
@@ -443,6 +447,72 @@ def main():
                 f"({report_out['corrected_downstream_conversion_numerator']}/"
                 f"{report_out['corrected_downstream_conversion_denominator']})"
             )
+        return
+    if len(argv) > 0 and argv[0] == "k2_known_confirmed_false_negative_audit":
+        out = K2KnownConfirmedFalseNegativeAudit.run_cli(argv=argv[1:])
+        print(f"known_confirmed_false_negative_audit.csv: {out['analysis_csv']}")
+        print(f"known_confirmed_false_negative_audit.txt: {out['report_txt']}")
+        print(f"epic_count: {out['epic_count']}")
+        for row in out.get("rows", []):
+            print(f"epic: {row.get('epic_id', '')}")
+            print(f"current_outcome_group: {row.get('current_outcome_group', '')}")
+            print(f"primary_rejection_bucket: {row.get('primary_rejection_bucket', '')}")
+            print(
+                "policy_flags: "
+                f"saved_default_survive={row.get('survives_under_saved_default_policy', False)} "
+                f"conditional_mcc2_survive={row.get('survives_under_conditional_mcc2_carveout', False)} "
+                f"larger_period_cap_survive={row.get('survives_under_larger_period_cap_from_existing_diagnostics', False)}"
+            )
+        return
+    if len(argv) > 0 and argv[0] == "k2_confirmed_planet_recall_audit":
+        out = K2ConfirmedPlanetRecallAudit.run_cli(argv=argv[1:])
+        print(f"k2_confirmed_planet_recall_audit.csv: {out['audit_csv']}")
+        print(f"k2_confirmed_planet_recall_rollup.csv: {out['rollup_csv']}")
+        print(f"k2_confirmed_false_negatives.csv: {out['false_negatives_csv']}")
+        print(f"nasa_confirmed_reference.csv: {out['reference_csv']}")
+        print(f"confirmed_total: {out['confirmed_total']}")
+        print(f"confirmed_in_best: {out['confirmed_in_best']}")
+        print(f"confirmed_in_quarantine: {out['confirmed_in_quarantine']}")
+        print(f"confirmed_detected_but_failed_downstream: {out['confirmed_detected_but_failed_downstream']}")
+        print(f"confirmed_no_events_after_filters: {out['confirmed_no_events_after_filters']}")
+        print(f"confirmed_not_seen: {out['confirmed_not_seen']}")
+        print(f"confirmed_recall_best_only: {out['confirmed_recall_best_only']:.6f}")
+        print(f"confirmed_recall_best_plus_quarantine: {out['confirmed_recall_best_plus_quarantine']:.6f}")
+        top_failure_reasons = out.get("top_failure_reasons", {})
+        if isinstance(top_failure_reasons, dict) and len(top_failure_reasons) > 0:
+            failure_text = " | ".join([f"{k}:{v}" for k, v in top_failure_reasons.items()])
+            print(f"top_failure_reasons_not_recovered_in_best: {failure_text}")
+        else:
+            print("top_failure_reasons_not_recovered_in_best: none")
+        print(f"representative_false_negative_examples: {out.get('representative_examples', '')}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_confirmed_planet_coverage_audit":
+        out = K2ConfirmedPlanetCoverageAudit.run_cli(argv=argv[1:])
+        print(f"k2_confirmed_planet_coverage_audit.csv: {out['audit_csv']}")
+        print(f"k2_confirmed_planet_coverage_rollup.csv: {out['rollup_csv']}")
+        print(f"confirmed_total: {out['confirmed_total']}")
+        print(f"matched_to_processed_universe: {out['matched_to_processed_universe']}")
+        print(f"not_processed: {out['not_processed']}")
+        print(f"id_mismatch: {out['id_mismatch']}")
+        print(f"outside_scope: {out['outside_scope']}")
+        print(f"load_failed: {out['load_failed']}")
+        print(f"final_dominant_coverage_blocker: {out['final_dominant_coverage_blocker']}")
+        print(f"coverage_vs_science_conclusion: {out['coverage_vs_science_conclusion']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_b_population_manifest":
+        out = K2StageBPopulationManifest.run_cli(argv=argv[1:])
+        print(f"k2_stage_b_master_population_manifest.csv: {out['master_csv']}")
+        print(f"k2_stage_b_master_unresolved_manifest.csv: {out['unresolved_csv']}")
+        print(f"k2_stage_b_population_rollup.csv: {out['rollup_csv']}")
+        print(f"total_relevant_epics: {out['total_relevant_epics']}")
+        print(f"processed_universe_epics: {out['processed_universe_epics']}")
+        print(f"known_confirmed_unique_epics: {out['known_confirmed_unique_epics']}")
+        print(f"resolved_already_classified: {out['resolved_already_classified']}")
+        print(f"known_confirmed_calibration_cases: {out['known_confirmed_calibration_cases']}")
+        print(f"unresolved_needing_triage: {out['unresolved_needing_triage']}")
+        print(f"load_failed_missing_light_curve: {out['load_failed_missing_light_curve']}")
+        print(f"outside_current_scope: {out['outside_current_scope']}")
+        print(f"exact_unresolved_manifest_path: {out['unresolved_csv']}")
         return
     K2CampaignRunner().run()
 
