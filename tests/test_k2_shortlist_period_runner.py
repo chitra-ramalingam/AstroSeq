@@ -73,6 +73,15 @@ class TestK2ShortlistPeriodRunner(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must contain one whiteness value column"):
             runner._load_raw_epic_table(shortlist_df=pd.DataFrame({"query": []}))
 
+    def test_choose_whiteness_value_column_prefers_explicit_pvalue(self) -> None:
+        df = pd.DataFrame(
+            {
+                "triage_whiteness_pvalue": [0.9, np.nan],
+                "triage_whiteness_score": [0.0, 0.0],
+            }
+        )
+        self.assertEqual(K2ShortlistPeriodRunner._choose_whiteness_value_column(df), "triage_whiteness_pvalue")
+
     def test_load_raw_epic_table_missing_file_raises_with_hint(self) -> None:
         case_dir = self._make_case_dir()
         raw_csv = case_dir / "missing_whiteness.csv"

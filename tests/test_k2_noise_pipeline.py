@@ -118,6 +118,73 @@ class TestLocalVsGlobalOutlierRate(unittest.TestCase):
         self.assertLess(m.outlier_rate_6sigma, 0.01)
 
 
+class TestK2WhitenessRepresentation(unittest.TestCase):
+    def test_metrics_single_preserves_finite_pvalue_and_explicit_fields(self) -> None:
+        handler = _make_handler(K2NoiseConfig(whiteness_score_definition="pvalue"))
+        rng = np.random.default_rng(123)
+        t = np.linspace(0.0, 30.0, 2000)
+        f = rng.normal(0.0, 1e-3, size=t.size)
+
+        m = handler._metrics_single(t, f)
+
+        self.assertEqual(str(m.whiteness_mode), "pvalue")
+        self.assertTrue(np.isfinite(m.whiteness_score))
+        self.assertTrue(np.isfinite(m.whiteness_pvalue))
+        self.assertGreater(float(m.whiteness_pvalue), 0.0)
+        self.assertAlmostEqual(float(m.whiteness_score), float(m.whiteness_pvalue), places=12)
+        self.assertTrue(np.isfinite(m.whiteness_log10_pvalue))
+        self.assertTrue(np.isfinite(m.whiteness_statistic_abs_rho))
+        self.assertTrue(np.isfinite(m.whiteness_z))
+        self.assertFalse(bool(m.whiteness_underflowed))
+
+    def test_metrics_single_marks_underflowed_pvalue_but_keeps_log_representation(self) -> None:
+        handler = _make_handler(K2NoiseConfig(whiteness_score_definition="pvalue"))
+        t = np.linspace(0.0, 30.0, 5000)
+        f = np.linspace(0.0, 1.0, t.size)
+
+        m = handler._metrics_single(t, f)
+
+        self.assertEqual(str(m.whiteness_mode), "pvalue")
+        self.assertEqual(float(m.whiteness_score), 0.0)
+        self.assertEqual(float(m.whiteness_pvalue), 0.0)
+        self.assertTrue(np.isfinite(m.whiteness_log10_pvalue))
+        self.assertTrue(np.isfinite(m.whiteness_z))
+        self.assertTrue(np.isfinite(m.whiteness_statistic_abs_rho))
+        self.assertTrue(bool(m.whiteness_underflowed))
+
+    def test_metrics_single_statistic_mode_keeps_explicit_statistic_and_nan_pvalues(self) -> None:
+        handler = _make_handler(K2NoiseConfig(whiteness_score_definition="statistic", max_whiteness_score=0.6))
+        rng = np.random.default_rng(456)
+        t = np.linspace(0.0, 30.0, 2000)
+        f = rng.normal(0.0, 1e-3, size=t.size)
+
+        m = handler._metrics_single(t, f)
+
+        self.assertEqual(str(m.whiteness_mode), "statistic")
+        self.assertTrue(np.isfinite(m.whiteness_score))
+        self.assertTrue(np.isfinite(m.whiteness_statistic_abs_rho))
+        self.assertAlmostEqual(float(m.whiteness_score), float(m.whiteness_statistic_abs_rho), places=12)
+        self.assertTrue(np.isnan(m.whiteness_pvalue))
+        self.assertTrue(np.isnan(m.whiteness_log10_pvalue))
+        self.assertTrue(np.isfinite(m.whiteness_z))
+        self.assertFalse(bool(m.whiteness_underflowed))
+
+    def test_metrics_single_noncomputable_whiteness_stays_nan_and_not_underflow(self) -> None:
+        handler = _make_handler(K2NoiseConfig(whiteness_score_definition="pvalue"))
+        t = np.linspace(0.0, 30.0, 2000)
+        f = np.ones_like(t)
+
+        m = handler._metrics_single(t, f)
+
+        self.assertEqual(str(m.whiteness_mode), "pvalue")
+        self.assertTrue(np.isnan(m.whiteness_score))
+        self.assertTrue(np.isnan(m.whiteness_pvalue))
+        self.assertTrue(np.isnan(m.whiteness_log10_pvalue))
+        self.assertTrue(np.isnan(m.whiteness_statistic_abs_rho))
+        self.assertTrue(np.isnan(m.whiteness_z))
+        self.assertFalse(bool(m.whiteness_underflowed))
+
+
 class TestK2NoiseLoaderRunOne(unittest.TestCase):
     def test_run_one_per_segment_includes_scores_and_reason(self) -> None:
         cfg = K2NoiseConfig(

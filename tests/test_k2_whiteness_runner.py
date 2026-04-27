@@ -85,8 +85,8 @@ class TestK2WhitenessRunner(unittest.TestCase):
         self.assertEqual(written["epic_id"].tolist(), [2, 3])
         self.assertEqual(written["triage_whiteness_definition"].tolist(), ["pvalue", "pvalue"])
         self.assertIn("triage_whiteness_pvalue", written.columns)
+        self.assertIn("triage_whiteness_score", written.columns)
         self.assertIn("triage_whiteness_interpretation", written.columns)
-        self.assertNotIn("triage_whiteness_score", written.columns)
 
     def test_run_cli_places_output_in_run_subdir(self) -> None:
         tmp = self._make_case_dir()
@@ -153,8 +153,44 @@ class TestK2WhitenessRunner(unittest.TestCase):
         self.assertEqual(out["whiteness_interpretation_column"], "triage_whiteness_higher_is_better")
         written = pd.read_csv(output_csv)
         self.assertIn("triage_whiteness_score", written.columns)
+        self.assertIn("triage_whiteness_pvalue", written.columns)
         self.assertIn("triage_whiteness_higher_is_better", written.columns)
-        self.assertNotIn("triage_whiteness_pvalue", written.columns)
+        self.assertTrue(written["triage_whiteness_pvalue"].isna().all())
+
+    def test_run_preserves_explicit_runtime_whiteness_fields(self) -> None:
+        tmp = self._make_case_dir()
+        input_csv = tmp / "batch_results.csv"
+        output_csv = tmp / "batch_results_whiteness.csv"
+        pd.DataFrame([{"query": "EPIC 1", "triage_status": "ok"}]).to_csv(input_csv, index=False)
+
+        class FakeBatchRunner:
+            def __init__(self, **kwargs):  # noqa: ANN003
+                pass
+
+            def retriage_results_df(self, df: pd.DataFrame) -> pd.DataFrame:
+                work = df.copy()
+                work["triage_whiteness_score"] = [0.0]
+                work["triage_whiteness_pvalue"] = [0.0]
+                work["triage_whiteness_log10_pvalue"] = [-400.0]
+                work["triage_whiteness_statistic_abs_rho"] = [0.99]
+                work["triage_whiteness_z"] = [40.0]
+                work["triage_whiteness_mode"] = ["pvalue"]
+                work["triage_whiteness_underflowed"] = [True]
+                work["triage_whiteness_definition"] = ["lag1_autocorr_pvalue_normal_approx"]
+                work["triage_usable"] = [False]
+                work["triage_why_not_usable"] = ["whiteness_pvalue<0.010 (0.000)"]
+                return work
+
+        with mock.patch("src.Classifiers.K2.Pipeline.K2WhitenessRunner.K2BatchRunner", FakeBatchRunner):
+            K2WhitenessRunner.run_cli(["--input", str(input_csv), "--out", str(output_csv)])
+
+        written = pd.read_csv(output_csv)
+        self.assertEqual(float(written.loc[0, "triage_whiteness_pvalue"]), 0.0)
+        self.assertEqual(float(written.loc[0, "triage_whiteness_log10_pvalue"]), -400.0)
+        self.assertEqual(float(written.loc[0, "triage_whiteness_statistic_abs_rho"]), 0.99)
+        self.assertEqual(float(written.loc[0, "triage_whiteness_z"]), 40.0)
+        self.assertEqual(str(written.loc[0, "triage_whiteness_mode"]), "pvalue")
+        self.assertTrue(bool(written.loc[0, "triage_whiteness_underflowed"]))
 
     def test_run_exports_null_ok_rows_for_anomaly_audit(self) -> None:
         tmp = self._make_case_dir()

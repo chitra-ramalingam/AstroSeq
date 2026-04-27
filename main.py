@@ -37,6 +37,19 @@ from src.Classifiers.K2.Batch.K2KnownConfirmedFalseNegativeAudit import K2KnownC
 from src.Classifiers.K2.Batch.K2ConfirmedPlanetRecallAudit import K2ConfirmedPlanetRecallAudit
 from src.Classifiers.K2.Batch.K2ConfirmedPlanetCoverageAudit import K2ConfirmedPlanetCoverageAudit
 from src.Classifiers.K2.Batch.K2StageBPopulationManifest import K2StageBPopulationManifest
+from src.Classifiers.K2.Batch.K2StageCActionQueue import K2StageCActionQueue
+from src.Classifiers.K2.Batch.K2StageDExecutionPackaging import K2StageDExecutionPackaging
+from src.Classifiers.K2.Batch.K2StageDDeeperEvalRunner import K2StageDDeeperEvalRunner
+from src.Classifiers.K2.Batch.K2StageEHighPriorityBatchPlan import K2StageEHighPriorityBatchPlan
+from src.Classifiers.K2.Batch.K2StageE1HighPriorityRerank import K2StageE1HighPriorityRerank
+from src.Classifiers.K2.Batch.K2StageFBatchExecution import K2StageFBatchExecution
+from src.Classifiers.K2.Batch.K2StageFBatch001bPackaging import K2StageFBatch001bPackaging
+from src.Classifiers.K2.Batch.K2StageFBatch001bExecution import K2StageFBatch001bExecution
+from src.Classifiers.K2.Batch.K2StageFBatch001Audit import K2StageFBatch001Audit
+from src.Classifiers.K2.Batch.K2StageGHighPriorityWhitenessAudit import K2StageGHighPriorityWhitenessAudit
+from src.Classifiers.K2.Batch.K2StageHWhitenessPolicyDiagnosis import K2StageHWhitenessPolicyDiagnosis
+from src.Classifiers.K2.Batch.K2StageLPostPatchCalibrationRerun import K2StageLPostPatchCalibrationRerun
+from src.Classifiers.K2.Batch.K2StageRAutoLabeler import K2StageRAutoLabeler
 from src.Classifiers.CnnModel import CnnModel
 from src.Classifiers.LargeWindow.LargeWindow_Processor import LargeWindowCnnModel
 
@@ -113,6 +126,27 @@ def main():
                 print(f"  {b:10s} count={c:7d} pct_total={pct:6.2f}%")
             if "outside_0_1_count" in bucket_table:
                 print(f"  outside_0_1 count={int(bucket_table.get('outside_0_1_count', 0)):7d}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_l_postpatch_calibration_rerun":
+        out = K2StageLPostPatchCalibrationRerun.run_cli(argv=argv[1:])
+        print(f"results_csv: {out['results_csv']}")
+        print(f"summary_csv: {out['summary_csv']}")
+        print(f"audit_csv: {out['audit_csv']}")
+        print(f"rows_attempted: {out['rows_attempted']}")
+        print(f"rows_completed: {out['rows_completed']}")
+        print(f"rows_failed: {out['rows_failed']}")
+        print(f"runtime_seconds: {out['runtime_seconds']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_r_label_events":
+        out = K2StageRAutoLabeler.run_cli(argv=argv[1:])
+        print(f"input_csv: {out['input_csv']}")
+        print(f"output_csv: {out['output_csv']}")
+        print(f"rows_input: {out['rows_input']}")
+        print(f"rows_output: {out['rows_output']}")
+        label_counts = out.get("label_counts", {})
+        if isinstance(label_counts, dict):
+            counts_text = " | ".join([f"{k}:{v}" for k, v in label_counts.items()])
+            print(f"label_counts: {counts_text}")
         return
     if len(argv) > 0 and argv[0] == "k2_rank_posthoc":
         out = K2PosthocRanking.run_cli(argv=argv[1:])
@@ -513,6 +547,174 @@ def main():
         print(f"load_failed_missing_light_curve: {out['load_failed_missing_light_curve']}")
         print(f"outside_current_scope: {out['outside_current_scope']}")
         print(f"exact_unresolved_manifest_path: {out['unresolved_csv']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_c":
+        out = K2StageCActionQueue.run_cli(argv=argv[1:])
+        print(f"k2_stage_c_action_queue.csv: {out['action_queue_csv']}")
+        print(f"k2_stage_c_action_queue_summary.csv: {out['summary_csv']}")
+        print(f"rows_total: {out['rows_total']}")
+        print(f"process_now_count: {out['process_now_count']}")
+        print(f"blocked_missing_light_curve_count: {out['blocked_missing_light_curve_count']}")
+        print(f"outside_scope_count: {out['outside_scope_count']}")
+        print(f"needs_manual_review_count: {out['needs_manual_review_count']}")
+        print(f"rescue_path_candidate_count: {out['rescue_path_candidate_count']}")
+        print(f"low_priority_or_defer_count: {out['low_priority_or_defer_count']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_d":
+        out = K2StageDExecutionPackaging.run_cli(argv=argv[1:])
+        print(f"k2_stage_d_process_now_high_priority.csv: {out['process_now_high_priority_csv']}")
+        print(f"k2_stage_d_process_now_medium_priority.csv: {out['process_now_medium_priority_csv']}")
+        print(f"k2_stage_d_rescue_candidates.csv: {out['rescue_candidates_csv']}")
+        print(f"k2_stage_d_manual_review.csv: {out['manual_review_csv']}")
+        print(f"k2_stage_d_deferred.csv: {out['deferred_csv']}")
+        print(f"process_now_high_priority_count: {out['process_now_high_priority_count']}")
+        print(f"process_now_medium_priority_count: {out['process_now_medium_priority_count']}")
+        print(f"rescue_candidates_count: {out['rescue_candidates_count']}")
+        print(f"manual_review_count: {out['manual_review_count']}")
+        print(f"deferred_count: {out['deferred_count']}")
+        print(f"rows_total: {out['rows_total']}")
+        print(f"ranking_logic: {out['ranking_logic']}")
+        print(f"null_handling: {out['null_handling']}")
+        missing = out["missing_ranking_fields"]
+        print(
+            "missing_ranking_fields: "
+            f"best_depth_snr={missing['best_depth_snr']} "
+            f"n_periods_proposed={missing['n_periods_proposed']} "
+            f"n_events={missing['n_events']} "
+            f"epic_id_norm={missing['epic_id_norm']} "
+            f"rows_with_any_missing_ranking_field={missing['rows_with_any_missing_ranking_field']}"
+        )
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_d_tier_a":
+        out = K2StageDDeeperEvalRunner.run_cli(argv=argv[1:])
+        print(f"k2_stage_d_tier_a_results.csv: {out['output_csv']}")
+        print(f"rows_input: {out['rows_input']}")
+        print(f"rows_output: {out['rows_output']}")
+        print(f"pass_count: {out['pass_count']}")
+        print(f"hold_count: {out['hold_count']}")
+        print(f"fail_count: {out['fail_count']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_e":
+        out = K2StageEHighPriorityBatchPlan.run_cli(argv=argv[1:])
+        print(f"k2_stage_e_high_priority_batch_plan.csv: {out['batch_plan_csv']}")
+        print(f"total_rows: {out['total_rows']}")
+        print(f"batch_size: {out['batch_size']}")
+        print(f"total_batches: {out['total_batches']}")
+        print(f"rows_per_batch_summary: {out['rows_per_batch_summary']}")
+        print(f"first_10_epics_batch_1: {' | '.join(out['first_10_epics_batch_1'])}")
+        print(f"recommended_batch_size: {out['recommended_batch_size']}")
+        print(f"batch_size_rationale: {out['batch_size_rationale']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_e1":
+        out = K2StageE1HighPriorityRerank.run_cli(argv=argv[1:])
+        print(f"k2_stage_e1_high_priority_rerank_preview.csv: {out['preview_csv']}")
+        print(f"k2_stage_e1_high_priority_rerank_summary.csv: {out['summary_csv']}")
+        print(f"rows_total: {out['rows_total']}")
+        print(f"whiteness_proxy_coverage: {out['whiteness_proxy_coverage']}")
+        print(f"old_top100_move_out: {out['old_top100_move_out']}")
+        print(f"new_top100_enter: {out['new_top100_enter']}")
+        print(
+            "reranked_batch_001_materially_different: "
+            f"{out['reranked_batch_001_materially_different']}"
+        )
+        print(f"recommendation: {out['recommendation']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_f":
+        out = K2StageFBatchExecution.run_cli(argv=argv[1:])
+        print(f"k2_stage_f_batch_001_results.csv: {out['results_csv']}")
+        print(f"k2_stage_f_batch_001_summary.csv: {out['summary_csv']}")
+        print(f"rows_attempted: {out['rows_attempted']}")
+        print(f"rows_completed: {out['rows_completed']}")
+        print(f"rows_failed: {out['rows_failed']}")
+        print(f"rows_with_candidate_signal: {out['rows_with_candidate_signal']}")
+        print(f"rows_without_candidate_signal: {out['rows_without_candidate_signal']}")
+        print(f"rows_flagged_for_manual_review: {out['rows_flagged_for_manual_review']}")
+        print(f"rows_requiring_rescue_followup: {out['rows_requiring_rescue_followup']}")
+        print(f"command_used: {out['command_used']}")
+        print(f"runtime_notes: {out['runtime_notes']}")
+        print(f"failure_modes_encountered: {out['failure_modes_encountered']}")
+        print(f"representative_for_batch_002: {out['representative_for_batch_002']}")
+        print(f"representative_note: {out['representative_note']}")
+        print(f"stage_f_run_dir: {out['stage_f_run_dir']}")
+        print(f"pipeline_batch_results_csv: {out['pipeline_batch_results_csv']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_f_001b":
+        out = K2StageFBatch001bPackaging.run_cli(argv=argv[1:])
+        print(f"k2_stage_f_batch_001b_input.csv: {out['input_csv']}")
+        print(f"k2_stage_f_batch_001b_plan_summary.csv: {out['plan_summary_csv']}")
+        print(f"rows_total: {out['rows_total']}")
+        print(f"first_10_epics: {' | '.join(out['first_10_epics'])}")
+        print(f"median_whiteness_proxy_value: {out['median_whiteness_proxy_value']}")
+        print(f"median_saved_triage_step_score: {out['median_saved_triage_step_score']}")
+        print(f"median_n_events: {out['median_n_events']}")
+        print(f"median_best_depth_snr: {out['median_best_depth_snr']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_f_001b_run":
+        out = K2StageFBatch001bExecution.run_cli(argv=argv[1:])
+        print(f"k2_stage_f_batch_001b_results.csv: {out['results_csv']}")
+        print(f"k2_stage_f_batch_001b_summary.csv: {out['summary_csv']}")
+        print(f"rows_attempted: {out['rows_attempted']}")
+        print(f"rows_completed: {out['rows_completed']}")
+        print(f"rows_failed: {out['rows_failed']}")
+        print(f"rows_with_candidate_signal: {out['rows_with_candidate_signal']}")
+        print(f"rows_without_candidate_signal: {out['rows_without_candidate_signal']}")
+        print(f"rows_flagged_for_manual_review: {out['rows_flagged_for_manual_review']}")
+        print(f"rows_requiring_rescue_followup: {out['rows_requiring_rescue_followup']}")
+        print(f"final_label_counts: {out['final_label_counts']}")
+        print(f"final_label_reason_counts: {out['final_label_reason_counts']}")
+        print(f"command_used: {out['command_used']}")
+        print(f"runtime_notes: {out['runtime_notes']}")
+        print(f"failure_modes_encountered: {out['failure_modes_encountered']}")
+        comparison = out['comparison']
+        print(f"original_batch_001_noisy_trash_count: {comparison['original_noisy_trash_count']}")
+        print(f"patched_batch_001b_noisy_trash_count: {comparison['current_noisy_trash_count']}")
+        print(f"patched_batch_001b_non_noisy_count: {comparison['current_non_noisy_count']}")
+        print(f"whiteness_rejection_frequency_improved: {comparison['whiteness_rejection_frequency_improved']}")
+        print(f"enough_evidence_to_proceed_to_later_batches: {comparison['enough_evidence_to_proceed']}")
+        print(f"comparison_note: {comparison['comparison_note']}")
+        print(f"stage_f_run_dir: {out['stage_f_run_dir']}")
+        print(f"pipeline_batch_results_csv: {out['pipeline_batch_results_csv']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_f_audit":
+        out = K2StageFBatch001Audit.run_cli(argv=argv[1:])
+        print(f"k2_stage_f_batch_001_audit.csv: {out['audit_csv']}")
+        print(f"k2_stage_f_batch_001_audit_summary.csv: {out['audit_summary_csv']}")
+        print(f"rows_total: {out['rows_total']}")
+        print(f"label_counts: {out['label_counts']}")
+        print(f"label_reason_counts: {out['label_reason_counts']}")
+        print(
+            "upstream_triage_usable_true_but_final_noisy_trash: "
+            f"{out['upstream_triage_usable_true_but_final_noisy_trash']}"
+        )
+        print(
+            "rejection_dominated_by_one_single_gate: "
+            f"{out['rejection_dominated_by_one_single_gate']}"
+        )
+        print(f"dominant_gate_reason: {out['dominant_gate_reason']}")
+        print(f"batch_002_likely_to_behave_similarly: {out['batch_002_likely_to_behave_similarly']}")
+        print(f"recommendation: {out['recommendation']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_g":
+        out = K2StageGHighPriorityWhitenessAudit.run_cli(argv=argv[1:])
+        print(f"k2_stage_g_high_priority_whiteness_audit.csv: {out['audit_csv']}")
+        print(f"k2_stage_g_high_priority_whiteness_audit_summary.csv: {out['summary_csv']}")
+        print(f"rows_total: {out['rows_total']}")
+        print(f"proxy_coverage: {out['proxy_coverage']}")
+        print(f"whiteness_risk_bucket_counts: {out['whiteness_risk_bucket_counts']}")
+        print(f"rows_with_n_periods_proposed_gt0: {out['rows_with_n_periods_proposed_gt0']}")
+        print(f"likely_low_yield_fraction: {out['likely_low_yield_fraction']}")
+        print(f"recommendation: {out['recommendation']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_h":
+        out = K2StageHWhitenessPolicyDiagnosis.run_cli(argv=argv[1:])
+        print(f"k2_stage_h_whiteness_policy_diagnosis.csv: {out['diagnosis_csv']}")
+        print(f"k2_stage_h_whiteness_policy_diagnosis_summary.csv: {out['summary_csv']}")
+        print(f"rows_total: {out['rows_total']}")
+        print(f"saved_proxy_pass_runtime_fail_count: {out['saved_proxy_pass_runtime_fail_count']}")
+        print(f"same_definition_count: {out['same_definition_count']}")
+        print(f"step_score_exact_match_count: {out['step_score_exact_match_count']}")
+        print(f"runtime_whiteness_zero_count: {out['runtime_whiteness_zero_count']}")
+        print(f"recommendation: {out['recommendation']}")
         return
     K2CampaignRunner().run()
 

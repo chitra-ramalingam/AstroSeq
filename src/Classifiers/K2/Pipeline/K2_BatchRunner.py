@@ -288,6 +288,35 @@ class K2BatchRunner:
         return default
 
     @staticmethod
+    def _coerce_whiteness_mode(mode: Any, definition: Any = "") -> str:
+        raw_mode = str(mode).strip().lower()
+        if raw_mode in {"pvalue", "statistic"}:
+            return raw_mode
+        low = str(definition).strip().lower()
+        if "pvalue" in low:
+            return "pvalue"
+        if "statistic" in low:
+            return "statistic"
+        return ""
+
+    def _preferred_whiteness_value(self, triage: Dict[str, Any]) -> float:
+        mode = self._coerce_whiteness_mode(
+            triage.get("whiteness_mode", ""),
+            triage.get("whiteness_definition", ""),
+        )
+        if mode == "pvalue":
+            return self._as_float(
+                triage.get("whiteness_pvalue", triage.get("whiteness_score", float("nan"))),
+                default=float("nan"),
+            )
+        if mode == "statistic":
+            return self._as_float(
+                triage.get("whiteness_statistic_abs_rho", triage.get("whiteness_score", float("nan"))),
+                default=float("nan"),
+            )
+        return self._as_float(triage.get("whiteness_score", float("nan")), default=float("nan"))
+
+    @staticmethod
     def _normalize_queries(raw_queries: Iterable[str]) -> List[str]:
         out: List[str] = []
         seen = set()
@@ -353,7 +382,8 @@ class K2BatchRunner:
         whiteness_definition = str(
             triage.get("whiteness_definition", getattr(noise_loader.handler, "whiteness_definition", lambda: "")())
         ).lower()
-        whiteness_is_pvalue = "pvalue" in whiteness_definition
+        whiteness_mode = self._coerce_whiteness_mode(triage.get("whiteness_mode", ""), whiteness_definition)
+        whiteness_is_pvalue = whiteness_mode == "pvalue"
         if status != "ok":
             reasons.append(f"triage_status={status or 'unknown'}")
         if (not usable) and why_not:
@@ -361,7 +391,7 @@ class K2BatchRunner:
         step = self._as_float(triage.get("step_score", float("nan")))
         if np.isfinite(step) and np.isfinite(self.noisy_step_threshold) and step > self.noisy_step_threshold:
             reasons.append(f"step_score>{self.noisy_step_threshold:.3f} ({step:.3f})")
-        white = self._as_float(triage.get("whiteness_score", float("nan")))
+        white = self._preferred_whiteness_value(triage)
         if np.isfinite(white) and np.isfinite(self.noisy_whiteness_threshold):
             if whiteness_is_pvalue:
                 if white < self.noisy_whiteness_threshold:
@@ -373,12 +403,13 @@ class K2BatchRunner:
     def _debug_whiteness_gate(self, query: str, triage: Dict[str, Any]) -> None:
         if self._whiteness_debug_printed >= self._whiteness_debug_limit:
             return
-        white = self._as_float(triage.get("whiteness_score", float("nan")))
         noise_loader = self._get_active_noise_loader()
         definition = str(
             triage.get("whiteness_definition", getattr(noise_loader.handler, "whiteness_definition", lambda: "unknown")())
         )
-        is_pvalue = "pvalue" in definition.lower()
+        mode = self._coerce_whiteness_mode(triage.get("whiteness_mode", ""), definition)
+        white = self._preferred_whiteness_value(triage)
+        is_pvalue = mode == "pvalue"
         if np.isfinite(white) and np.isfinite(self.noisy_whiteness_threshold):
             gate_pass = (white >= self.noisy_whiteness_threshold) if is_pvalue else (white <= self.noisy_whiteness_threshold)
         else:
@@ -747,6 +778,18 @@ class K2BatchRunner:
             # Preserve semantic distinction: NaN means upstream whiteness metric is unavailable,
             # not that the source is necessarily white/noisy.
             work["triage_whiteness_score"] = np.nan
+        if "triage_whiteness_pvalue" not in work.columns:
+            work["triage_whiteness_pvalue"] = np.nan
+        if "triage_whiteness_log10_pvalue" not in work.columns:
+            work["triage_whiteness_log10_pvalue"] = np.nan
+        if "triage_whiteness_statistic_abs_rho" not in work.columns:
+            work["triage_whiteness_statistic_abs_rho"] = np.nan
+        if "triage_whiteness_z" not in work.columns:
+            work["triage_whiteness_z"] = np.nan
+        if "triage_whiteness_mode" not in work.columns:
+            work["triage_whiteness_mode"] = ""
+        if "triage_whiteness_underflowed" not in work.columns:
+            work["triage_whiteness_underflowed"] = False
         if "triage_why_not_usable" not in work.columns:
             work["triage_why_not_usable"] = ""
         if "triage_whiteness_definition" not in work.columns:
@@ -761,13 +804,28 @@ class K2BatchRunner:
         for idx in work.index:
             status = str(work.at[idx, "triage_status"]).strip().lower()
             step = self._as_float(work.at[idx, "triage_step_score"], default=float("nan"))
-            white = self._as_float(work.at[idx, "triage_whiteness_score"], default=float("nan"))
 
             wdef_raw = str(work.at[idx, "triage_whiteness_definition"]).strip()
             if (wdef_raw == "") or (wdef_raw.lower() == "nan"):
                 wdef_raw = self.noise_loader.handler.whiteness_definition()
-            whiteness_is_pvalue = "pvalue" in wdef_raw.lower()
+            mode = self._coerce_whiteness_mode(work.at[idx, "triage_whiteness_mode"], wdef_raw)
+            whiteness_is_pvalue = mode == "pvalue"
             work.at[idx, "triage_whiteness_definition"] = wdef_raw
+            work.at[idx, "triage_whiteness_mode"] = mode
+
+            explicit_pvalue = self._as_float(work.at[idx, "triage_whiteness_pvalue"], default=float("nan"))
+            explicit_stat = self._as_float(work.at[idx, "triage_whiteness_statistic_abs_rho"], default=float("nan"))
+            legacy_white = self._as_float(work.at[idx, "triage_whiteness_score"], default=float("nan"))
+            if whiteness_is_pvalue:
+                white = explicit_pvalue if np.isfinite(explicit_pvalue) else legacy_white
+                work.at[idx, "triage_whiteness_pvalue"] = white
+                if (not np.isfinite(legacy_white)) and np.isfinite(white):
+                    work.at[idx, "triage_whiteness_score"] = white
+            else:
+                white = explicit_stat if np.isfinite(explicit_stat) else legacy_white
+                work.at[idx, "triage_whiteness_statistic_abs_rho"] = white
+                if (not np.isfinite(legacy_white)) and np.isfinite(white):
+                    work.at[idx, "triage_whiteness_score"] = white
 
             reasons = self._strip_retriage_managed_reasons(work.at[idx, "triage_why_not_usable"])
             if status != "ok":
@@ -794,6 +852,11 @@ class K2BatchRunner:
                 "why_not_usable": triage_why,
                 "step_score": step,
                 "whiteness_score": white,
+                "whiteness_pvalue": self._as_float(work.at[idx, "triage_whiteness_pvalue"], default=float("nan")),
+                "whiteness_statistic_abs_rho": self._as_float(
+                    work.at[idx, "triage_whiteness_statistic_abs_rho"], default=float("nan")
+                ),
+                "whiteness_mode": mode,
                 "whiteness_definition": wdef_raw,
             }
             hard_reasons = self._hard_fail_reasons(triage_dict)
@@ -1037,6 +1100,12 @@ class K2BatchRunner:
             "triage_n_points": 0,
             "triage_step_score": float("nan"),
             "triage_whiteness_score": float("nan"),
+            "triage_whiteness_pvalue": float("nan"),
+            "triage_whiteness_log10_pvalue": float("nan"),
+            "triage_whiteness_statistic_abs_rho": float("nan"),
+            "triage_whiteness_z": float("nan"),
+            "triage_whiteness_mode": "",
+            "triage_whiteness_underflowed": False,
             "triage_whiteness_definition": "",
             "triage_why_not_usable": "",
             "n_points_after_preprocess": 0,
@@ -1088,6 +1157,22 @@ class K2BatchRunner:
                     "triage_n_points": int(self._as_float(triage.get("n_points", 0.0), default=0.0)),
                     "triage_step_score": self._as_float(triage.get("step_score", float("nan"))),
                     "triage_whiteness_score": self._as_float(triage.get("whiteness_score", float("nan"))),
+                    "triage_whiteness_pvalue": self._as_float(triage.get("whiteness_pvalue", float("nan"))),
+                    "triage_whiteness_log10_pvalue": self._as_float(
+                        triage.get("whiteness_log10_pvalue", float("nan"))
+                    ),
+                    "triage_whiteness_statistic_abs_rho": self._as_float(
+                        triage.get("whiteness_statistic_abs_rho", float("nan"))
+                    ),
+                    "triage_whiteness_z": self._as_float(triage.get("whiteness_z", float("nan"))),
+                    "triage_whiteness_mode": self._coerce_whiteness_mode(
+                        triage.get("whiteness_mode", ""),
+                        triage.get("whiteness_definition", ""),
+                    ),
+                    "triage_whiteness_underflowed": self._as_bool(
+                        triage.get("whiteness_underflowed", False),
+                        default=False,
+                    ),
                     "triage_whiteness_definition": str(triage.get("whiteness_definition", "")),
                     "triage_why_not_usable": str(triage.get("why_not_usable", "")),
                     "n_points_after_preprocess": int(

@@ -27,6 +27,12 @@ class K2NoiseMetrics:
     whiteness_score: float  # interpreted by K2NoiseConfig.whiteness_score_definition
     outlier_rate_global: float = np.nan
     notes: str = ""
+    whiteness_pvalue: float = np.nan
+    whiteness_log10_pvalue: float = np.nan
+    whiteness_statistic_abs_rho: float = np.nan
+    whiteness_z: float = np.nan
+    whiteness_mode: str = ""
+    whiteness_underflowed: bool = False
 
 
 @dataclass
@@ -653,6 +659,8 @@ class K2_NoiseHandler:
                 whiteness_score=np.nan,
                 outlier_rate_global=np.nan,
                 notes=notes + ";too_few_points",
+                whiteness_mode=str(self.noise_config.whiteness_score_definition),
+                whiteness_underflowed=False,
             )
 
         baseline = float(np.nanmax(t) - np.nanmin(t))
@@ -686,6 +694,12 @@ class K2_NoiseHandler:
         # - pvalue mode: p = 2*(1-Phi(|rho_1|*sqrt(n-1))) = erfc(|rho_1|*sqrt(n-1)/sqrt(2))
         #   This is a two-sided normal-approximation p-value for H0: rho_1 = 0.
         #   Higher p indicates residuals are more consistent with whiteness at lag 1.
+        whiteness_mode = str(self.noise_config.whiteness_score_definition)
+        whiteness_pvalue = float("nan")
+        whiteness_log10_pvalue = float("nan")
+        whiteness_statistic_abs_rho = float("nan")
+        whiteness_z = float("nan")
+        whiteness_underflowed = False
         fr = f - med
         if np.all(~np.isfinite(fr)) or np.nanstd(fr) == 0:
             w = np.nan
@@ -696,11 +710,20 @@ class K2_NoiseHandler:
             fr1 = fr1 - np.nanmean(fr1)
             denom = (np.nanstd(fr0) * np.nanstd(fr1)) + 1e-12
             rho = float(np.nanmean(fr0 * fr1) / denom)
+            whiteness_statistic_abs_rho = float(np.abs(rho))
+            whiteness_z = float(whiteness_statistic_abs_rho * np.sqrt(max(float(n - 1), 1.0)))
             if self.noise_config.whiteness_score_definition == "pvalue":
-                z = abs(rho) * np.sqrt(max(float(n - 1), 1.0))
-                w = float(math.erfc(float(z) / np.sqrt(2.0)))
+                x = float(whiteness_z) / np.sqrt(2.0)
+                whiteness_pvalue = float(math.erfc(float(x)))
+                whiteness_log10_pvalue = float(self._stable_log10_erfc(float(x)))
+                whiteness_underflowed = bool(
+                    whiteness_pvalue == 0.0
+                    and np.isfinite(whiteness_log10_pvalue)
+                    and np.isfinite(whiteness_z)
+                )
+                w = float(whiteness_pvalue)
             else:
-                w = float(np.abs(rho))
+                w = float(whiteness_statistic_abs_rho)
         print(
             f"[whiteness calc] func=_metrics_single test={self.whiteness_definition()} "
             f"value_type={self.noise_config.whiteness_score_definition} lags=[1] value={w}"
@@ -717,6 +740,12 @@ class K2_NoiseHandler:
             whiteness_score=w,
             outlier_rate_global=outlier_rate_global,
             notes=notes,
+            whiteness_pvalue=whiteness_pvalue,
+            whiteness_log10_pvalue=whiteness_log10_pvalue,
+            whiteness_statistic_abs_rho=whiteness_statistic_abs_rho,
+            whiteness_z=whiteness_z,
+            whiteness_mode=whiteness_mode,
+            whiteness_underflowed=whiteness_underflowed,
         )
 
     def score(self, m: K2NoiseMetrics) -> float:
@@ -777,6 +806,10 @@ class K2_NoiseHandler:
             "outlier_rate_global": float(m.outlier_rate_global),
             "step_score": float(m.step_score),
             "whiteness_score": float(m.whiteness_score),
+            "whiteness_pvalue": float(m.whiteness_pvalue),
+            "whiteness_log10_pvalue": float(m.whiteness_log10_pvalue),
+            "whiteness_statistic_abs_rho": float(m.whiteness_statistic_abs_rho),
+            "whiteness_z": float(m.whiteness_z),
         }
 
         fail_reasons: List[str] = []
@@ -804,6 +837,21 @@ class K2_NoiseHandler:
         if self.noise_config.whiteness_score_definition == "pvalue":
             return "lag1_autocorr_pvalue_normal_approx"
         return "lag1_abs_autocorr_statistic"
+
+    @staticmethod
+    def _stable_log10_erfc(x: float) -> float:
+        if (not np.isfinite(x)) or x < 0.0:
+            return float("nan")
+        p = float(math.erfc(float(x)))
+        if p > 0.0:
+            return float(math.log10(p))
+        if x == 0.0:
+            return 0.0
+        correction = 1.0 - (1.0 / (2.0 * x * x)) + (3.0 / (4.0 * x**4))
+        if (not np.isfinite(correction)) or correction <= 0.0:
+            correction = 1.0
+        log_p = (-x * x) - math.log(x) - (0.5 * math.log(math.pi)) + math.log(correction)
+        return float(log_p / math.log(10.0))
 
     def whiteness_threshold(self) -> float:
         if self.noise_config.whiteness_score_definition == "pvalue":

@@ -99,6 +99,12 @@ class K2NoiseLoader:
                 # NaN whiteness indicates metric unavailable because this row failed before
                 # a valid residual autocorrelation test could be computed.
                 "whiteness_score": np.nan,
+                "whiteness_pvalue": np.nan,
+                "whiteness_log10_pvalue": np.nan,
+                "whiteness_statistic_abs_rho": np.nan,
+                "whiteness_z": np.nan,
+                "whiteness_mode": str(self.handler.noise_config.whiteness_score_definition),
+                "whiteness_underflowed": False,
             }
         )
         return row
@@ -159,6 +165,12 @@ class K2NoiseLoader:
             "author_selected": "",
             "campaign_selected": "",
             "whiteness_definition": self.handler.whiteness_definition(),
+            "whiteness_mode": str(self.handler.noise_config.whiteness_score_definition),
+            "whiteness_pvalue": np.nan,
+            "whiteness_log10_pvalue": np.nan,
+            "whiteness_statistic_abs_rho": np.nan,
+            "whiteness_z": np.nan,
+            "whiteness_underflowed": False,
             "score": float("-inf"),
             "score_global": float("-inf"),
             "score_best_seg": float("-inf"),
@@ -215,6 +227,12 @@ class K2NoiseLoader:
                     "outlier_rate_global": np.nan,
                     "step_score": np.nan,
                     "whiteness_score": np.nan,
+                    "whiteness_pvalue": np.nan,
+                    "whiteness_log10_pvalue": np.nan,
+                    "whiteness_statistic_abs_rho": np.nan,
+                    "whiteness_z": np.nan,
+                    "whiteness_mode": str(self.handler.noise_config.whiteness_score_definition),
+                    "whiteness_underflowed": False,
                 }
             )
             return row

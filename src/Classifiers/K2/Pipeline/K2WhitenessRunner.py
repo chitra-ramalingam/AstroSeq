@@ -363,6 +363,12 @@ class K2WhitenessRunner:
             "triage_status": "",
             "triage_usable": False,
             "triage_whiteness_score": float("nan"),
+            "triage_whiteness_pvalue": float("nan"),
+            "triage_whiteness_log10_pvalue": float("nan"),
+            "triage_whiteness_statistic_abs_rho": float("nan"),
+            "triage_whiteness_z": float("nan"),
+            "triage_whiteness_mode": "",
+            "triage_whiteness_underflowed": False,
             "triage_whiteness_definition": "",
             "triage_why_not_usable": "",
         }
@@ -374,6 +380,13 @@ class K2WhitenessRunner:
         work["epic_id"] = work["epic_id"].fillna("").astype(str).str.strip()
         work["triage_whiteness_definition"] = work["triage_whiteness_definition"].fillna("").astype(str)
         work["triage_whiteness_score"] = pd.to_numeric(work["triage_whiteness_score"], errors="coerce")
+        work["triage_whiteness_pvalue"] = pd.to_numeric(work["triage_whiteness_pvalue"], errors="coerce")
+        work["triage_whiteness_log10_pvalue"] = pd.to_numeric(work["triage_whiteness_log10_pvalue"], errors="coerce")
+        work["triage_whiteness_statistic_abs_rho"] = pd.to_numeric(
+            work["triage_whiteness_statistic_abs_rho"], errors="coerce"
+        )
+        work["triage_whiteness_z"] = pd.to_numeric(work["triage_whiteness_z"], errors="coerce")
+        work["triage_whiteness_mode"] = work["triage_whiteness_mode"].fillna("").astype(str)
 
         is_pvalue_series = self._whiteness_is_pvalue_series(work["triage_whiteness_definition"])
         non_empty_defs = work["triage_whiteness_definition"].str.strip() != ""
@@ -383,8 +396,10 @@ class K2WhitenessRunner:
         whiteness_value_col = "triage_whiteness_score"
         interpretation_col = ""
         if all_pvalue:
-            work["triage_whiteness_pvalue"] = work["triage_whiteness_score"]
-            work = work.drop(columns=["triage_whiteness_score"])
+            missing_pvalue_mask = work["triage_whiteness_pvalue"].isna()
+            work.loc[missing_pvalue_mask, "triage_whiteness_pvalue"] = work.loc[missing_pvalue_mask, "triage_whiteness_score"]
+            blank_mode_mask = work["triage_whiteness_mode"].str.strip() == ""
+            work.loc[blank_mode_mask, "triage_whiteness_mode"] = "pvalue"
             whiteness_value_col = "triage_whiteness_pvalue"
             interpretation_col = "triage_whiteness_interpretation"
             work[interpretation_col] = (

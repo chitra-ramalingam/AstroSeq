@@ -211,6 +211,36 @@ class TestK2BatchRunnerDetectorOnlyAnalysis(unittest.TestCase):
         self.assertTrue(pd.isna(row["best_shape_score"]))
         self.assertTrue(pd.isna(row["best_depth_snr"]))
 
+    def test_retriage_prefers_explicit_pvalue_field_when_present(self) -> None:
+        runner = K2BatchRunner(
+            out_dir=self._make_case_dir(),
+            queries=["EPIC 211301344"],
+            cache_only=True,
+            skip_existing_epics=False,
+        )
+        df = pd.DataFrame(
+            [
+                {
+                    "query": "EPIC 211301344",
+                    "triage_status": "ok",
+                    "triage_step_score": 0.2,
+                    "triage_whiteness_score": 0.0,
+                    "triage_whiteness_pvalue": 0.95,
+                    "triage_whiteness_mode": "pvalue",
+                    "triage_whiteness_definition": "lag1_autocorr_pvalue_normal_approx",
+                    "triage_why_not_usable": "",
+                    "n_events": 1,
+                    "best_shape_score": 0.82,
+                    "best_depth_snr": 5.1,
+                }
+            ]
+        )
+
+        out = runner.retriage_results_df(df)
+
+        self.assertTrue(bool(out.iloc[0]["triage_usable"]))
+        self.assertEqual(str(out.iloc[0]["triage_why_not_usable"]), "")
+
 
 if __name__ == "__main__":
     unittest.main()
