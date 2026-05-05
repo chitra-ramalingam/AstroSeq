@@ -1,0 +1,83 @@
+Stage G Calibrated Ranking Policy Note
+======================================
+
+Inputs
+------
+This policy note summarizes the current Stage G calibrated ranking pass using:
+
+- freezes/stage_g_calibrated_ranking_layer.csv
+- freezes/stage_g_calibrated_ranking_layer_rule.json
+- freezes/stage_g_candidate_ledger_review.csv
+- the Stage G feature-attribution breakdown for the below-threshold
+  science_like rows and the false-positive pass row
+
+Model Status
+------------
+Stage G is a tabular ranking and support layer only. It is not a replacement
+for the Keras flux model, manual labels, Stage D/F vetting, or final candidate
+ledger decisions.
+
+The active K2 Keras flux model remains frozen:
+
+models/k2_nocrop_flux_seed46_split303.best.keras
+
+Do not retrain or fine-tune any model as part of this Stage G policy.
+
+Policy Conclusions
+------------------
+Stage G score must not override manual labels.
+
+Candidate-like and planet-like rows are not demoted solely because
+calibrated_score < 0.70. A below-threshold Stage G score should be treated as
+a request for explanation, feature review, or follow-up prioritization, not as
+an automatic rejection.
+
+Uncertain_hold and not_science_like rows are not promoted solely because
+calibrated_score >= 0.70. A high Stage G score can flag a row for review, but
+it cannot overturn closed labels or manual/visual false-positive decisions by
+itself.
+
+EPIC_211842439 is a known false-positive pass under the current Stage G rule.
+It scored above the calibrated threshold because Stage D and Stage F support
+were strong and penalties were small, but its closed label is not_science_like
+and its ledger status is hold_low_priority_candidate. It must remain
+do-not-promote unless new external evidence or manual review explicitly
+changes that status.
+
+Over-Penalized Science-Like Rows
+--------------------------------
+The current Stage G rule over-penalizes several science_like rows, especially
+through odd/even penalties and Stage F weakness terms:
+
+- EPIC_211908778
+- EPIC_211404127
+- EPIC_211759361
+- EPIC_211889692
+- EPIC_211954033
+
+These rows should not be treated as rejected or demoted solely because their
+calibrated_score is below 0.70. Their feature breakdowns show that the current
+rule is conservative and can suppress known or candidate-like positives when
+odd/even, OOT, Stage F, or Stage D components are imperfect.
+
+Operational Use
+---------------
+Use Stage G as a prioritization and support score, not as a hard
+acceptance/rejection gate.
+
+Recommended interpretation:
+
+- calibrated_score >= 0.70: high-priority review/support signal, not automatic
+  promotion.
+- calibrated_score < 0.70 for science_like rows: inspect suppression reasons;
+  do not demote solely from the Stage G score.
+- flux_p_science_like >= 0.60: broad send-to-vetting signal, consistent with
+  the frozen Keras flux-model policy.
+- manual labels, Stage D/F diagnostics, visual review, and external evidence
+  remain authoritative for promotion/rejection decisions.
+
+Ledger Policy
+-------------
+Do not update final_candidate_master_ledger.csv from this Stage G score alone.
+Any ledger change must be a separate deliberate review action with supporting
+evidence beyond the calibrated ranking score.

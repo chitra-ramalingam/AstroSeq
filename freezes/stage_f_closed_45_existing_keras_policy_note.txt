@@ -1,0 +1,40 @@
+Stage F Closed-45 Existing Keras Flux Model Policy Note
+=======================================================
+
+Model
+-----
+The active K2 flux model is confirmed as:
+
+models/k2_nocrop_flux_seed46_split303.best.keras
+
+This model was evaluated without training or fine-tuning. Freshly computed
+scores exactly match the existing flux_p_science_like values in
+k2_hybrid_candidate_score_v2.csv, confirming that the current scoring path and
+stored flux score are aligned.
+
+Audit Conclusion
+----------------
+The existing Keras flux model is useful as a broad recall filter, not as a
+standalone precision classifier.
+
+On the frozen Stage F closed-label binary set, excluding unresolved /
+uncertain_hold rows:
+
+- At threshold 0.60, recall is 1.00 but precision is only about 0.19.
+- At threshold 0.70, precision is about 0.29 and recall is about 0.29.
+- At threshold 0.80, precision improves to 0.50 but recall collapses to about
+  0.14.
+
+Policy
+------
+Do not auto-promote candidates using flux score alone.
+
+Use flux_p_science_like >= 0.60 as a broad "send to deeper vetting" signal.
+This threshold is appropriate for recall-oriented triage because it recovers
+the known positive examples in this frozen audit, but it admits too many false
+positives to support promotion by itself.
+
+Promotion and rejection decisions should continue to depend on Stage D/F
+metrics, false-positive diagnostics, visual/manual review, and any external
+vetting evidence. The flux model should be treated as one upstream signal in
+the candidate-review pipeline, not as the final classifier.

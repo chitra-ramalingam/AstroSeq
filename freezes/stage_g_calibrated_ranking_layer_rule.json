@@ -1,0 +1,48 @@
+{
+  "model_policy": "Keras flux model is frozen; this is a tabular Stage G ranking layer only.",
+  "active_flux_model": "models/k2_nocrop_flux_seed46_split303.best.keras",
+  "input_score": "flux_p_science_like",
+  "flux_send_to_vetting_threshold": 0.6,
+  "base_weights": {
+    "flux": 0.2,
+    "flux_gate": 0.05,
+    "stage_d": 0.3,
+    "stage_f": 0.25,
+    "event": 0.1,
+    "shape": 0.1
+  },
+  "penalty_weights": {
+    "odd_even": 0.28,
+    "secondary": 0.22,
+    "oot": 0.22,
+    "alias": 0.16,
+    "spike": 0.08
+  },
+  "penalty_scale": 0.55,
+  "calibrated_pass_threshold": 0.7,
+  "calibration_rows": {
+    "total_scored_rows": 52,
+    "binary_eval_rows": 38,
+    "positives": 7,
+    "negatives": 31,
+    "excluded_unresolved": 14
+  },
+  "binary_metrics_at_pass_threshold": {
+    "tp": 2,
+    "fp": 1,
+    "tn": 30,
+    "fn": 5,
+    "precision": 0.6666666666666666,
+    "recall": 0.2857142857142857,
+    "f1": 0.4
+  },
+  "top_k_precision": {
+    "top_5_tp": 2,
+    "top_5_fp": 3,
+    "top_5_precision": 0.4,
+    "top_10_tp": 2,
+    "top_10_fp": 8,
+    "top_10_precision": 0.2
+  },
+  "stage_f_queue_rows": 0
+}

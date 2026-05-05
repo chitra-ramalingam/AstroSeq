@@ -1,0 +1,52 @@
+Stage G Candidate Ledger Review and Calibrated Ranking Layer
+==============================================================
+
+Keras model status: frozen; no Keras training or fine-tuning performed.
+Active flux model: models/k2_nocrop_flux_seed46_split303.best.keras
+Frozen labels: freezes\training_labels_v3_stage_f_closed_45.csv
+Stage F queue rows: 0
+
+Calibrated ranking layer:
+- flux send-to-vetting threshold: 0.60
+- calibrated pass threshold: 0.700
+- penalty scale: 0.55
+- binary metrics: TP=2 FP=1 TN=30 FN=5 precision=0.667 recall=0.286 F1=0.400
+- top-5 precision: 0.400
+- top-10 precision: 0.200
+
+Stage G review tiers:
+- C_flux_triage_deeper_vetting: 38
+- D_hold_or_reject_review: 11
+- A_calibrated_followup_review: 3
+
+Stage G ledger-review actions:
+- hold_or_reject_review: 29
+- closed_negative_do_not_reopen_without_new_evidence: 10
+- known_positive_below_pass_threshold_recheck_features: 5
+- unresolved_flux_triage_when_queue_reopens: 5
+- candidate_supported_by_calibrated_layer: 2
+- calibration_false_positive_do_not_promote: 1
+
+Top Stage G review rows:
+ stage_g_rank        epic_id  stage_g_calibrated_score          stage_g_review_tier                         stage_g_ledger_review_action  flux_p_science_like training_label_v3 science_binary_v3                final_candidate_status
+            1 EPIC_211842439                  0.824197 A_calibrated_followup_review            calibration_false_positive_do_not_promote             0.660845    uncertain_hold  not_science_like           hold_low_priority_candidate
+            2 EPIC_212001099                  0.779926 A_calibrated_followup_review              candidate_supported_by_calibrated_layer             0.812864       planet_like      science_like             promote_primary_candidate
+            3 EPIC_211534076                  0.703778 A_calibrated_followup_review              candidate_supported_by_calibrated_layer             0.654113    candidate_like      science_like recovered_known_unconfirmed_candidate
+            4 EPIC_211530033                  0.666595 C_flux_triage_deeper_vetting                                hold_or_reject_review             0.636427 noise_or_artifact  not_science_like                                   NaN
+            5 EPIC_211396246                  0.665347 C_flux_triage_deeper_vetting                                hold_or_reject_review             0.667493 noise_or_artifact  not_science_like                                   NaN
+            6 EPIC_211972200                  0.664480 C_flux_triage_deeper_vetting   closed_negative_do_not_reopen_without_new_evidence             0.659852     binary_system  not_science_like        reject_as_planet_binary_system
+            7 EPIC_211525754                  0.625712 C_flux_triage_deeper_vetting   closed_negative_do_not_reopen_without_new_evidence             0.613988 noise_or_artifact  not_science_like          reject_manual_false_positive
+            8 EPIC_211988531                  0.621504 C_flux_triage_deeper_vetting                                hold_or_reject_review             0.627599    uncertain_hold  not_science_like             hold_borderline_candidate
+            9 EPIC_211490307                  0.601533 C_flux_triage_deeper_vetting   closed_negative_do_not_reopen_without_new_evidence             0.729034 noise_or_artifact  not_science_like          reject_manual_false_positive
+           10 EPIC_211748059                  0.587639 C_flux_triage_deeper_vetting   closed_negative_do_not_reopen_without_new_evidence             0.681614    uncertain_hold  not_science_like  reject_low_confidence_shallow_signal
+           11 EPIC_211569204                  0.575084 C_flux_triage_deeper_vetting                                hold_or_reject_review             0.685650 noise_or_artifact  not_science_like                                   NaN
+           12 EPIC_211954033                  0.559287 C_flux_triage_deeper_vetting known_positive_below_pass_threshold_recheck_features             0.668708    candidate_like      science_like         promote_candidate_alias_check
+           13 EPIC_211910082                  0.536549 C_flux_triage_deeper_vetting                                hold_or_reject_review             0.636104 noise_or_artifact  not_science_like                                   NaN
+           14 EPIC_211551640                  0.532435 C_flux_triage_deeper_vetting   closed_negative_do_not_reopen_without_new_evidence             0.636997 noise_or_artifact  not_science_like          reject_manual_false_positive
+           15 EPIC_212003686                  0.525971 C_flux_triage_deeper_vetting   closed_negative_do_not_reopen_without_new_evidence             0.651908 noise_or_artifact  not_science_like          reject_manual_false_positive
+
+Wrote: freezes\stage_g_calibrated_ranking_layer.csv
+Wrote: freezes\stage_g_calibrated_ranking_layer_sweep.csv
+Wrote: freezes\stage_g_calibrated_ranking_layer_rule.json
+Wrote: freezes\stage_g_candidate_ledger_review.csv
+Wrote: freezes\stage_g_candidate_ledger_review_summary.txt

@@ -40,8 +40,10 @@ from src.Classifiers.K2.Batch.K2StageBPopulationManifest import K2StageBPopulati
 from src.Classifiers.K2.Batch.K2StageCActionQueue import K2StageCActionQueue
 from src.Classifiers.K2.Batch.K2StageDExecutionPackaging import K2StageDExecutionPackaging
 from src.Classifiers.K2.Batch.K2StageDDeeperEvalRunner import K2StageDDeeperEvalRunner
+from src.Classifiers.K2.Batch.K2StageDTop10InspectionPackage import K2StageDTop10InspectionPackage
 from src.Classifiers.K2.Batch.K2StageEHighPriorityBatchPlan import K2StageEHighPriorityBatchPlan
 from src.Classifiers.K2.Batch.K2StageE1HighPriorityRerank import K2StageE1HighPriorityRerank
+from src.Classifiers.K2.Batch.K2StageFFollowupValidation import K2StageFFollowupValidation
 from src.Classifiers.K2.Batch.K2StageFBatchExecution import K2StageFBatchExecution
 from src.Classifiers.K2.Batch.K2StageFBatch001bPackaging import K2StageFBatch001bPackaging
 from src.Classifiers.K2.Batch.K2StageFBatch001bExecution import K2StageFBatch001bExecution
@@ -594,6 +596,15 @@ def main():
         print(f"hold_count: {out['hold_count']}")
         print(f"fail_count: {out['fail_count']}")
         return
+    if len(argv) > 0 and argv[0] == "k2_stage_d_top10_inspection":
+        out = K2StageDTop10InspectionPackage.run_cli(argv=argv[1:])
+        print(f"stage_d_top10_dir: {out['out_dir']}")
+        print(f"k2_stage_d_top10_inspection_index.csv: {out['index_csv']}")
+        print(f"rows_input: {out['rows_input']}")
+        print(f"top_n: {out['top_n']}")
+        print(f"rows_output: {out['rows_output']}")
+        print(f"top_epics: {' | '.join(out['top_epics'])}")
+        return
     if len(argv) > 0 and argv[0] == "k2_stage_e":
         out = K2StageEHighPriorityBatchPlan.run_cli(argv=argv[1:])
         print(f"k2_stage_e_high_priority_batch_plan.csv: {out['batch_plan_csv']}")
@@ -618,6 +629,18 @@ def main():
             f"{out['reranked_batch_001_materially_different']}"
         )
         print(f"recommendation: {out['recommendation']}")
+        return
+    if len(argv) > 0 and argv[0] == "k2_stage_f_followup":
+        out = K2StageFFollowupValidation.run_cli(argv=argv[1:])
+        print(f"k2_stage_f_followup_validation.csv: {out['output_csv']}")
+        print(f"stage_f_followup_dir: {out['out_dir']}")
+        print(f"rows_input: {out['rows_input']}")
+        print(f"rows_output: {out['rows_output']}")
+        print(f"label_counts: {out['label_counts']}")
+        print(f"planet_like_epics: {' | '.join(out['planet_like_epics'])}")
+        print(f"hold_epics: {' | '.join(out['hold_epics'])}")
+        print(f"likely_eb_epics: {' | '.join(out['likely_eb_epics'])}")
+        print(f"reject_epics: {' | '.join(out['reject_epics'])}")
         return
     if len(argv) > 0 and argv[0] == "k2_stage_f":
         out = K2StageFBatchExecution.run_cli(argv=argv[1:])

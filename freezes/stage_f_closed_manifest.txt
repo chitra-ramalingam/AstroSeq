@@ -1,0 +1,52 @@
+freeze_name: stage_f_closed_45
+created_at: 2026-05-05 21:23:02 +01:00
+
+source_state:
+  next_needs_stage_f_validation rows: 0
+  training_labels_v3 rows: 45
+  manual Stage F rows: 13
+
+frozen_files:
+  training_labels_v3.csv -> freezes/training_labels_v3_stage_f_closed_45.csv
+  k2_hybrid_candidate_score_v3.csv -> freezes/k2_hybrid_candidate_score_v3_stage_f_closed_45.csv
+  k2_hybrid_top50_unresolved_v3.csv -> freezes/k2_hybrid_top50_unresolved_v3_stage_f_closed_45.csv
+  k2_stage_f_v3_manual_review_outcomes.csv -> freezes/k2_stage_f_v3_manual_review_outcomes_13.csv
+  k2_stage_f_v3_manual_reviewed.csv -> freezes/k2_stage_f_v3_manual_reviewed_13.csv
+  strict_rejected_or_not_promoted.csv -> freezes/strict_rejected_or_not_promoted_stage_f_closed.csv
+
+final training_label_v3 counts:
+  binary_system: 2
+  candidate_like: 5
+  low_priority_negative: 5
+  noise_or_artifact: 19
+  planet_like: 2
+  uncertain_hold: 11
+  variable_or_artifact: 1
+
+Manual Stage F label counts:
+  hold_deeper_eval: 7
+  promote_to_deeper_eval: 2
+  reject_as_noise_or_artifact: 4
+
+candidate_like / planet_like EPIC list:
+  EPIC_211404127: candidate_like (promote_to_deeper_eval)
+  EPIC_211534076: candidate_like (recovered_known_unconfirmed_candidate)
+  EPIC_211759361: candidate_like (promote_to_deeper_eval)
+  EPIC_211908778: candidate_like (promote_candidate_alias_check)
+  EPIC_211954033: candidate_like (promote_candidate_alias_check)
+  EPIC_211889692: planet_like (recovered_known_confirmed_planet)
+  EPIC_212001099: planet_like (promote_primary_candidate)
+
+note: no model training has been started from this freeze yet
+
+stage_g:
+  calibrated_ranking_layer_created: true
+  policy_note: freezes/stage_g_calibrated_ranking_policy_note.txt
+  active_keras_model_frozen: models/k2_nocrop_flux_seed46_split303.best.keras
+  use_policy: support/prioritization only
+  manual_label_policy: Stage G must not override manual labels
+  known_false_positive_pass:
+    epic_id: EPIC_211842439
+    policy: remains do-not-promote
+  final_candidate_master_ledger_updated: false
+  model_retraining_started: false
