@@ -1,0 +1,103 @@
+Manual 64 model disagreement report
+generated_at=2026-06-01T18:31:25
+
+eb_variable_false_positive
+count=10
+- EPIC_200008831: label=binary_system; cnn=0.8340081572532654; snr=8.535942614654859; odd_even=
+- EPIC_211424769: label=binary_system; cnn=0.6961907148361206; snr=85.25739851563685; odd_even=
+- EPIC_211542908: label=binary_system; cnn=0.934166669845581; snr=18.883850107542788; odd_even=
+- EPIC_211573482: label=binary_system; cnn=0.8235576152801514; snr=287.9108511204542; odd_even=
+- EPIC_211581700: label=binary_system; cnn=0.9759197235107422; snr=6.535198089290305; odd_even=
+- EPIC_211586814: label=binary_system; cnn=0.8914650678634644; snr=43.463627452523205; odd_even=
+- EPIC_211730838: label=binary_system; cnn=0.9896190762519836; snr=11.820047898454524; odd_even=
+- EPIC_211800810: label=binary_system; cnn=0.681884765625; snr=88.35126054047569; odd_even=
+- EPIC_211980366: label=variable_or_possible_eb; cnn=0.9329875111579895; snr=4.645146976687128; odd_even=
+- EPIC_212009427: label=variable_or_possible_eb; cnn=0.8540639877319336; snr=13.092684359444288; odd_even=
+
+fallback_period_dominated_reject
+count=17
+- EPIC_211933215: label=reject_as_noise_or_artifact; cnn=0.7312652468681335; snr=85.6721103893121; odd_even=
+- EPIC_211935518: label=low_priority_negative; cnn=0.7694324254989624; snr=227.3101472913956; odd_even=
+- EPIC_211939206: label=low_priority_negative; cnn=0.7356958985328674; snr=97.80512069200432; odd_even=
+- EPIC_211942823: label=reject_as_noise_or_artifact; cnn=0.6873986721038818; snr=92.06307252617174; odd_even=
+- EPIC_211944670: label=low_priority_negative; cnn=0.9806146025657654; snr=5.90199824602945; odd_even=
+- EPIC_211945246: label=low_priority_negative; cnn=0.7421477437019348; snr=37.34600828280925; odd_even=
+- EPIC_211945592: label=reject_as_noise_or_artifact; cnn=0.6816451549530029; snr=178.5280967834526; odd_even=
+- EPIC_211949114: label=reject_as_noise_or_artifact; cnn=0.661672830581665; snr=142.6838556022833; odd_even=
+- EPIC_211975006: label=reject_as_noise_or_artifact; cnn=0.7611322402954102; snr=786.2540025803444; odd_even=
+- EPIC_211977407: label=reject_as_noise_or_artifact; cnn=0.6735972762107849; snr=174.21353179569007; odd_even=
+- EPIC_211979334: label=reject_as_noise_or_artifact; cnn=0.7664146423339844; snr=142.09708617751724; odd_even=
+- EPIC_211980250: label=reject_as_noise_or_artifact; cnn=0.7985085248947144; snr=967.711192859967; odd_even=
+- EPIC_211980366: label=variable_or_possible_eb; cnn=0.9329875111579895; snr=4.645146976687128; odd_even=
+- EPIC_211990908: label=reject_as_noise_or_artifact; cnn=0.7553717494010925; snr=20.82412573538871; odd_even=
+- EPIC_212007527: label=reject_as_noise_or_artifact; cnn=0.6702864170074463; snr=52.41065123429144; odd_even=
+- EPIC_212009427: label=variable_or_possible_eb; cnn=0.8540639877319336; snr=13.092684359444288; odd_even=
+- EPIC_212025784: label=reject_as_noise_or_artifact; cnn=0.7077947854995728; snr=167.92992321825875; odd_even=
+
+good_odd_even_manual_reject
+count=13
+- EPIC_211529191: label=noise_or_artifact; cnn=0.9225077033042908; snr=24.650137063087723; odd_even=
+- EPIC_211730838: label=binary_system; cnn=0.9896190762519836; snr=11.820047898454524; odd_even=
+- EPIC_211781094: label=noise_or_artifact; cnn=0.9170820713043213; snr=16.711806082360567; odd_even=
+- EPIC_211844348: label=noise_or_artifact; cnn=0.8062503337860107; snr=59.02308109998477; odd_even=
+- EPIC_211935518: label=low_priority_negative; cnn=0.7694324254989624; snr=227.3101472913956; odd_even=
+- EPIC_211945246: label=low_priority_negative; cnn=0.7421477437019348; snr=37.34600828280925; odd_even=
+- EPIC_211949114: label=reject_as_noise_or_artifact; cnn=0.661672830581665; snr=142.6838556022833; odd_even=
+- EPIC_211975006: label=reject_as_noise_or_artifact; cnn=0.7611322402954102; snr=786.2540025803444; odd_even=
+- EPIC_211980250: label=reject_as_noise_or_artifact; cnn=0.7985085248947144; snr=967.711192859967; odd_even=
+- EPIC_211980366: label=variable_or_possible_eb; cnn=0.9329875111579895; snr=4.645146976687128; odd_even=
+- EPIC_211995966: label=reject_as_noise_or_artifact; cnn=0.8787158131599426; snr=3.3663627933369327; odd_even=
+- EPIC_212009427: label=variable_or_possible_eb; cnn=0.8540639877319336; snr=13.092684359444288; odd_even=
+- EPIC_212025784: label=reject_as_noise_or_artifact; cnn=0.7077947854995728; snr=167.92992321825875; odd_even=
+
+high_cnn_score_manual_reject
+count=15
+- EPIC_211493634: label=noise_or_artifact; cnn=0.8903582096099854; snr=786.5457058179314; odd_even=
+- EPIC_211529191: label=noise_or_artifact; cnn=0.9225077033042908; snr=24.650137063087723; odd_even=
+- EPIC_211542908: label=binary_system; cnn=0.934166669845581; snr=18.883850107542788; odd_even=
+- EPIC_211549072: label=noise_or_artifact; cnn=0.9907761216163635; snr=86.28376206886168; odd_even=
+- EPIC_211581700: label=binary_system; cnn=0.9759197235107422; snr=6.535198089290305; odd_even=
+- EPIC_211586814: label=binary_system; cnn=0.8914650678634644; snr=43.463627452523205; odd_even=
+- EPIC_211702989: label=noise_or_artifact; cnn=0.9450697302818298; snr=32.53137702753472; odd_even=
+- EPIC_211730838: label=binary_system; cnn=0.9896190762519836; snr=11.820047898454524; odd_even=
+- EPIC_211781094: label=noise_or_artifact; cnn=0.9170820713043213; snr=16.711806082360567; odd_even=
+- EPIC_211902535: label=noise_or_artifact; cnn=0.8885582685470581; snr=53.51234780049332; odd_even=
+- EPIC_211944670: label=low_priority_negative; cnn=0.9806146025657654; snr=5.90199824602945; odd_even=
+- EPIC_211980366: label=variable_or_possible_eb; cnn=0.9329875111579895; snr=4.645146976687128; odd_even=
+- EPIC_211995966: label=reject_as_noise_or_artifact; cnn=0.8787158131599426; snr=3.3663627933369327; odd_even=
+- EPIC_212009427: label=variable_or_possible_eb; cnn=0.8540639877319336; snr=13.092684359444288; odd_even=
+- EPIC_212020442: label=reject_as_noise_or_artifact; cnn=0.8967928290367126; snr=55.30061058733229; odd_even=
+
+high_snr_manual_reject
+count=24
+- EPIC_211424769: label=binary_system; cnn=0.6961907148361206; snr=85.25739851563685; odd_even=
+- EPIC_211493634: label=noise_or_artifact; cnn=0.8903582096099854; snr=786.5457058179314; odd_even=
+- EPIC_211549072: label=noise_or_artifact; cnn=0.9907761216163635; snr=86.28376206886168; odd_even=
+- EPIC_211573482: label=binary_system; cnn=0.8235576152801514; snr=287.9108511204542; odd_even=
+- EPIC_211683904: label=noise_or_artifact; cnn=0.6841166615486145; snr=84.66082289164677; odd_even=
+- EPIC_211800810: label=binary_system; cnn=0.681884765625; snr=88.35126054047569; odd_even=
+- EPIC_211844348: label=noise_or_artifact; cnn=0.8062503337860107; snr=59.02308109998477; odd_even=
+- EPIC_211902535: label=noise_or_artifact; cnn=0.8885582685470581; snr=53.51234780049332; odd_even=
+- EPIC_211911273: label=noise_or_artifact; cnn=0.7800821661949158; snr=525.128918818695; odd_even=
+- EPIC_211920612: label=reject_as_noise_or_artifact; cnn=0.8228314518928528; snr=1414.662660857537; odd_even=
+- EPIC_211933215: label=reject_as_noise_or_artifact; cnn=0.7312652468681335; snr=85.6721103893121; odd_even=
+- EPIC_211935518: label=low_priority_negative; cnn=0.7694324254989624; snr=227.3101472913956; odd_even=
+- EPIC_211939206: label=low_priority_negative; cnn=0.7356958985328674; snr=97.80512069200432; odd_even=
+- EPIC_211942823: label=reject_as_noise_or_artifact; cnn=0.6873986721038818; snr=92.06307252617174; odd_even=
+- EPIC_211945592: label=reject_as_noise_or_artifact; cnn=0.6816451549530029; snr=178.5280967834526; odd_even=
+- EPIC_211949114: label=reject_as_noise_or_artifact; cnn=0.661672830581665; snr=142.6838556022833; odd_even=
+- EPIC_211952381: label=reject_as_noise_or_artifact; cnn=0.8226560354232788; snr=87.68611864530789; odd_even=
+- EPIC_211975006: label=reject_as_noise_or_artifact; cnn=0.7611322402954102; snr=786.2540025803444; odd_even=
+- EPIC_211977407: label=reject_as_noise_or_artifact; cnn=0.6735972762107849; snr=174.21353179569007; odd_even=
+- EPIC_211979334: label=reject_as_noise_or_artifact; cnn=0.7664146423339844; snr=142.09708617751724; odd_even=
+- EPIC_211980250: label=reject_as_noise_or_artifact; cnn=0.7985085248947144; snr=967.711192859967; odd_even=
+- EPIC_212007527: label=reject_as_noise_or_artifact; cnn=0.6702864170074463; snr=52.41065123429144; odd_even=
+- EPIC_212020442: label=reject_as_noise_or_artifact; cnn=0.8967928290367126; snr=55.30061058733229; odd_even=
+- EPIC_212025784: label=reject_as_noise_or_artifact; cnn=0.7077947854995728; snr=167.92992321825875; odd_even=
+
+low_cnn_score_manual_candidate_or_hold
+count=4
+- EPIC_200008924: label=uncertain_hold; cnn=0.6653202772140503; snr=8.33886143257409; odd_even=
+- EPIC_211357782: label=candidate_like; cnn=0.6888611316680908; snr=33.3519455234077; odd_even=
+- EPIC_211418290: label=uncertain_hold; cnn=0.6718457341194153; snr=72.65122952006693; odd_even=
+- EPIC_211959522: label=uncertain_hold; cnn=0.6675747036933899; snr=99.20677884722946; odd_even=

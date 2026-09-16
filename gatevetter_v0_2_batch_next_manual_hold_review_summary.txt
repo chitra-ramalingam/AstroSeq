@@ -1,0 +1,61 @@
+GateVetter v0.2 batch-next manual top-hold review summary
+review_batch: gatevetter_v0_2_batch_next_top_hold_review
+consolidated_at: 2026-06-17
+reviewer: user_provided_manual_review
+
+Stage G queue data rows: 0
+Manual decisions supplied and logged: 16
+Input note: Stage G queue was empty; reviewed objects are completed top_20_holds manual labels.
+Action: no CNN retraining performed; GateVetter v0.2 thresholds unchanged.
+Training policy: completed top_20_holds review rows are excluded from training for now; negatives may be mined later.
+
+Summary counts:
+- candidate_like: 0
+- uncertain_hold_positive: 3
+- uncertain_hold_period_ambiguous: 2
+- low_priority_negative: 6
+- reject_as_noise_or_artifact: 5
+- variable_or_possible_eb: 0
+
+manual_label_family counts: {'hold': 5, 'negative': 11}
+training_eligibility counts: {'exclude_for_now': 16}
+final_candidate_master_ledger rows refreshed: 10
+final_candidate_master_ledger rows appended: 6
+
+1. positive-leaning holds needing deeper review
+- EPIC_211707161 (hold_rank=1): Promising hold. Trusted refreshed period with low alias risk, good odd/even ratio, very low OOT/d
+- EPIC_212015396 (hold_rank=3): Visually promising shallow dip, SNR=8.46, no obvious secondary, short duration_fraction, but period ambiguous/untrusted, odd/even and OOT missing, alias_risk=period_ambiguous, candidate_period_count=1242. Needs period confirmation and diagnostic recompute.
+- EPIC_212005801 (hold_rank=12): Visually promising coherent dip, strong SNR=13.6, reasonable duration, moderate event support, no obvious secondary, but period is ambiguous/untrusted and odd/even, OOT, secondary_snr are missing. Needs period confirmation and diagnostic recompute.
+
+2. period-ambiguous holds needing period confirmation
+- EPIC_211939094 (hold_rank=2): Clear dip-like morphology and high CNN score, with moderate primary SNR and reasonable duration fraction, but period validation is untrusted/ambiguous. Odd/even and OOT diagnostics are unavailable, alias risk is period_ambiguous, and candidate_period_count is high. Do not promote to candidate_like until period is confirmed and odd/even/OOT diagnostics can be trusted.
+- EPIC_211964543 (hold_rank=4): Visible dip-like features and SNR=6.04, no measured secondary, but period is ambiguous/untrusted, odd/even and OOT missing, alias_risk=period_ambiguous, candidate_period_count=1491. Needs period confirmation.
+
+3. clear negatives usable later as negative examples
+- EPIC_211432946 (hold_rank=5; label=low_priority_negative): Trusted refreshed period and high CNN morphology score with low alias risk and no clear secondary, but primary SNR is modest, odd/even ratio is borderline-poor at 0.727, OOT variability is high relative to depth at 0.783, and candidate_period_count is very large. Not candidate_like.
+- EPIC_211518347 (hold_rank=6; label=low_priority_negative): Trusted refreshed period, low alias risk, good odd/even ratio, and high CNN morphology score, but the transit evidence is weak. Primary_depth_snr is only 2.47, event support is low at 5, and OOT variability is high relative to depth at 0.904. Secondary metric is not a clean EB detection, but the phase/secondary region is not reassuring. Not candidate_like.
+- EPIC_211781289 (hold_rank=7; label=reject_as_noise_or_artifact): Trusted refreshed period and acceptable odd/even/secondary metrics, but the primary signal is extremely weak with primary_depth_snr=1.15. OOT variability exceeds the transit depth at oot_to_depth=1.13, event support is low, and CNN morphology score is not enough to rescue a near-non-detection.
+- EPIC_211792360 (hold_rank=8; label=low_priority_negative): Trusted refreshed period with excellent odd/even agreement, no measured secondary, low alias risk, and good event-family support. However, primary SNR is only modest, duration is long-ish, candidate_period_count is very high, and OOT variability exceeds the transit depth at oot_to_depth=1.077. Not candidate_like.
+- EPIC_211892055 (hold_rank=9; label=low_priority_negative): Trusted refreshed period with good odd/even agreement and no measured secondary, but the primary signal is extremely weak with primary_depth_snr=1.06. OOT variability is high relative to transit depth at oot_to_depth=0.920, alias risk is moderate, event support is limited, and candidate_period_count remains high. Not candidate_like.
+- EPIC_211894518 (hold_rank=10; label=low_priority_negative): Trusted refreshed period with acceptable odd/even ratio and moderate/high CNN morphology score, but the signal is weak with primary_depth_snr=1.86. OOT variability exceeds 50% of transit depth, duration fraction is high at 0.15 for a short 1.29-day period, and event support is limited. Not candidate_like.
+- EPIC_211945502 (hold_rank=11; label=low_priority_negative): Trusted refreshed period, excellent odd/even, low alias risk, good event count, but weak SNR=2.59, high OOT/depth=0.862, very short period, high candidate_period_count. Not candidate_like.
+- EPIC_212011152 (hold_rank=13; label=reject_as_noise_or_artifact): Period ambiguous/untrusted, long P=30.89d, very low event support=4, tiny depth, missing odd/even/OOT, alias_risk=period_ambiguous. Reject/noise.
+- EPIC_211504682 (hold_rank=14; label=reject_as_noise_or_artifact): Trusted refreshed period and low alias risk, but the signal is extremely weak with primary_depth_snr=1.12 and primary_depth only 5.56e-05. OOT variability is high relative to depth at 0.918 and candidate_period_count is very large. Odd/even is acceptable but cannot rescue a near-non-detection.
+- EPIC_211998546 (hold_rank=15; label=reject_as_noise_or_artifact): Trusted period and low alias risk, but weak SNR=2.90, OOT/depth=0.543, long-ish duration_fraction=0.124, low event support. Reject/noise.
+- EPIC_211592536 (hold_rank=16; label=reject_as_noise_or_artifact): Period is ambiguous and untrusted, duration fraction is too large at 0.201, primary_depth_snr is only 0.56, odd/even and OOT diagnostics are unavailable due to period ambiguity, candidate_period_count is high at 970, and no convincing transit-like signal is visible.
+
+4. high-CNN false positives
+- EPIC_211432946 (hold_rank=5; label=low_priority_negative; cnn_score=0.9650353789329529; error_family=cnn_morphology_false_positive_or_overcall): Trusted refreshed period and high CNN morphology score with low alias risk and no clear secondary, but primary SNR is modest, odd/even ratio is borderline-poor at 0.727, OOT variability is high relative to depth at 0.783, and candidate_period_count is very large. Not candidate_like.
+- EPIC_211518347 (hold_rank=6; label=low_priority_negative; cnn_score=0.9943699240684509; error_family=cnn_morphology_false_positive_or_overcall): Trusted refreshed period, low alias risk, good odd/even ratio, and high CNN morphology score, but the transit evidence is weak. Primary_depth_snr is only 2.47, event support is low at 5, and OOT variability is high relative to depth at 0.904. Secondary metric is not a clean EB detection, but the phase/secondary region is not reassuring. Not candidate_like.
+- EPIC_211781289 (hold_rank=7; label=reject_as_noise_or_artifact; cnn_score=0.7903218865394592; error_family=cnn_morphology_false_positive_or_overcall): Trusted refreshed period and acceptable odd/even/secondary metrics, but the primary signal is extremely weak with primary_depth_snr=1.15. OOT variability exceeds the transit depth at oot_to_depth=1.13, event support is low, and CNN morphology score is not enough to rescue a near-non-detection.
+- EPIC_211892055 (hold_rank=9; label=low_priority_negative; cnn_score=0.7108688354492188; error_family=cnn_morphology_false_positive_or_overcall): Trusted refreshed period with good odd/even agreement and no measured secondary, but the primary signal is extremely weak with primary_depth_snr=1.06. OOT variability is high relative to transit depth at oot_to_depth=0.920, alias risk is moderate, event support is limited, and candidate_period_count remains high. Not candidate_like.
+- EPIC_211894518 (hold_rank=10; label=low_priority_negative; cnn_score=0.8457432389259338; error_family=cnn_morphology_false_positive_or_overcall): Trusted refreshed period with acceptable odd/even ratio and moderate/high CNN morphology score, but the signal is weak with primary_depth_snr=1.86. OOT variability exceeds 50% of transit depth, duration fraction is high at 0.15 for a short 1.29-day period, and event support is limited. Not candidate_like.
+- EPIC_211945502 (hold_rank=11; label=low_priority_negative; cnn_score=0.9337005615234375; error_family=cnn_morphology_false_positive_or_overcall): Trusted refreshed period, excellent odd/even, low alias risk, good event count, but weak SNR=2.59, high OOT/depth=0.862, very short period, high candidate_period_count. Not candidate_like.
+- EPIC_212011152 (hold_rank=13; label=reject_as_noise_or_artifact; cnn_score=0.6663674116134644; error_family=cnn_morphology_false_positive_or_overcall): Period ambiguous/untrusted, long P=30.89d, very low event support=4, tiny depth, missing odd/even/OOT, alias_risk=period_ambiguous. Reject/noise.
+- EPIC_211504682 (hold_rank=14; label=reject_as_noise_or_artifact; cnn_score=0.679133415222168; error_family=cnn_morphology_false_positive_or_overcall): Trusted refreshed period and low alias risk, but the signal is extremely weak with primary_depth_snr=1.12 and primary_depth only 5.56e-05. OOT variability is high relative to depth at 0.918 and candidate_period_count is very large. Odd/even is acceptable but cannot rescue a near-non-detection.
+
+Files consolidated:
+- gatevetter_v0_2_batch_next_manual_hold_review_decisions.csv
+- gatevetter_v0_2_batch_next_manual_hold_review_summary.txt
+- cnn_manual_review_error_ledger.csv
+- plots/k2_batch/final_candidate_master_ledger.csv

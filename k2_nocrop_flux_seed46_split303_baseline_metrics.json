@@ -1,0 +1,177 @@
+{
+  "model_family": "k2_nocrop_flux_seed46_split303",
+  "loaded_model_path": "C:\\Projects\\AstroSeq\\AstroSeq\\models\\k2_nocrop_flux_seed46_split303.best.keras",
+  "labels_csv": "C:\\Projects\\AstroSeq\\AstroSeq\\training_labels_v2.csv",
+  "inference_x": "C:\\Projects\\AstroSeq\\AstroSeq\\splits\\infer_c5\\X_infer.npy",
+  "inference_meta": "C:\\Projects\\AstroSeq\\AstroSeq\\splits\\infer_c5\\meta_infer.parquet",
+  "outputs": {
+    "eval_csv": "C:\\Projects\\AstroSeq\\AstroSeq\\k2_nocrop_flux_seed46_split303_baseline_eval.csv",
+    "metrics_json": "C:\\Projects\\AstroSeq\\AstroSeq\\k2_nocrop_flux_seed46_split303_baseline_metrics.json",
+    "confusion_matrix_csv": "C:\\Projects\\AstroSeq\\AstroSeq\\k2_nocrop_flux_seed46_split303_baseline_confusion_matrix.csv"
+  },
+  "artifact_scan": {
+    "keras_files": [
+      "C:\\Projects\\AstroSeq\\AstroSeq\\models\\k2_nocrop_flux_seed46_split303.best.keras",
+      "C:\\Projects\\AstroSeq\\AstroSeq\\models\\k2_nocrop_flux_seed46_split303.keras"
+    ],
+    "history_files": [],
+    "metrics_files": [],
+    "config_files": [],
+    "scaler_normalizer_tensor_metadata_files": [
+      "C:\\Projects\\AstroSeq\\AstroSeq\\splits\\seed303\\meta_test.parquet",
+      "C:\\Projects\\AstroSeq\\AstroSeq\\splits\\seed303\\meta_train.parquet",
+      "C:\\Projects\\AstroSeq\\AstroSeq\\splits\\seed303\\meta_val.parquet",
+      "C:\\Projects\\AstroSeq\\AstroSeq\\splits\\seed303\\X_test.npy",
+      "C:\\Projects\\AstroSeq\\AstroSeq\\splits\\seed303\\X_train.npy",
+      "C:\\Projects\\AstroSeq\\AstroSeq\\splits\\seed303\\X_val.npy"
+    ]
+  },
+  "model_input_shape": [
+    null,
+    512,
+    1
+  ],
+  "model_output_shape": [
+    null,
+    1
+  ],
+  "source_tensor_shape": [
+    419518,
+    512,
+    2
+  ],
+  "tensor_input_used": "X_infer[:, :, :1] flux-only, matching K2TransitTrainerV2.load_split",
+  "n_labeled_epics": 22,
+  "n_matched_labeled_epics": 22,
+  "missing_labeled_epics": [],
+  "label_counts": {
+    "uncertain_hold": 9,
+    "noise_or_artifact": 8,
+    "candidate_like": 2,
+    "planet_like": 2,
+    "binary_system": 1
+  },
+  "binary_alignment": {
+    "positive_labels": [
+      "planet_like",
+      "candidate_like"
+    ],
+    "negative_labels": [
+      "noise_or_artifact",
+      "binary_system"
+    ],
+    "excluded_labels": [
+      "uncertain_hold"
+    ],
+    "threshold": 0.5,
+    "n_aligned": 13,
+    "n_excluded": 9
+  },
+  "binary_metrics_on_aligned_labels": {
+    "accuracy_at_0p5": 0.38461538461538464,
+    "balanced_accuracy_at_0p5": 0.5555555555555556,
+    "roc_auc_p_max": 0.6666666666666667,
+    "average_precision_p_max": 0.5682539682539682,
+    "confusion_matrix_labels": [
+      "not_science_like",
+      "science_like"
+    ],
+    "confusion_matrix": [
+      [
+        1,
+        8
+      ],
+      [
+        0,
+        4
+      ]
+    ]
+  },
+  "top_labeled_by_p_max": [
+    {
+      "baseline_rank": 1,
+      "epic_id": "EPIC_212001099",
+      "training_label_v2": "planet_like",
+      "p_max": 0.8128641843795776,
+      "p_top3_mean": 0.7879082560539246,
+      "num_segments": 427
+    },
+    {
+      "baseline_rank": 2,
+      "epic_id": "EPIC_211490307",
+      "training_label_v2": "noise_or_artifact",
+      "p_max": 0.7290341258049011,
+      "p_top3_mean": 0.6968155900637308,
+      "num_segments": 13
+    },
+    {
+      "baseline_rank": 3,
+      "epic_id": "EPIC_211878672",
+      "training_label_v2": "uncertain_hold",
+      "p_max": 0.7071822881698608,
+      "p_top3_mean": 0.6451448599497477,
+      "num_segments": 13
+    },
+    {
+      "baseline_rank": 4,
+      "epic_id": "EPIC_211887206",
+      "training_label_v2": "uncertain_hold",
+      "p_max": 0.6916623115539551,
+      "p_top3_mean": 0.5632018744945526,
+      "num_segments": 13
+    },
+    {
+      "baseline_rank": 5,
+      "epic_id": "EPIC_211748059",
+      "training_label_v2": "uncertain_hold",
+      "p_max": 0.6816136837005615,
+      "p_top3_mean": 0.6523628433545431,
+      "num_segments": 13
+    },
+    {
+      "baseline_rank": 6,
+      "epic_id": "EPIC_211739276",
+      "training_label_v2": "noise_or_artifact",
+      "p_max": 0.6772735118865967,
+      "p_top3_mean": 0.6313258608182272,
+      "num_segments": 13
+    },
+    {
+      "baseline_rank": 7,
+      "epic_id": "EPIC_211926132",
+      "training_label_v2": "uncertain_hold",
+      "p_max": 0.6761777400970459,
+      "p_top3_mean": 0.6510870655377706,
+      "num_segments": 13
+    },
+    {
+      "baseline_rank": 8,
+      "epic_id": "EPIC_211554121",
+      "training_label_v2": "noise_or_artifact",
+      "p_max": 0.6750602722167969,
+      "p_top3_mean": 0.6490737199783325,
+      "num_segments": 13
+    },
+    {
+      "baseline_rank": 9,
+      "epic_id": "EPIC_211954033",
+      "training_label_v2": "candidate_like",
+      "p_max": 0.6687077879905701,
+      "p_top3_mean": 0.6308594743410746,
+      "num_segments": 13
+    },
+    {
+      "baseline_rank": 10,
+      "epic_id": "EPIC_211842439",
+      "training_label_v2": "uncertain_hold",
+      "p_max": 0.6608452796936035,
+      "p_top3_mean": 0.6238475441932678,
+      "num_segments": 13
+    }
+  ],
+  "notes": [
+    "No retraining was performed.",
+    "The model is binary sigmoid; multiclass training_label_v2 values only partially align, so confusion is binary and excludes uncertain_hold.",
+    "EPIC-level score uses max segment probability, matching the existing best-window-per-star inference ranking style."
+  ]
+}

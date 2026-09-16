@@ -1,0 +1,59 @@
+freeze_name: stage_h_candidate_followup_45
+created_at: 2026-05-07
+
+source_state:
+  rows_updated_in_training_labels_v3.csv: 3
+  rows_updated_in_final_candidate_master_ledger.csv: 3
+
+frozen_files:
+  training_labels_v3.csv -> freezes/training_labels_v3_stage_h_candidate_followup_45.csv
+  plots/k2_batch/final_candidate_master_ledger.csv -> freezes/final_candidate_master_ledger_stage_h_candidate_followup.csv
+  plots/k2_batch/stage_h_candidate_followup/stage_h_followup_review_sheet.csv -> freezes/stage_h_candidate_followup_review_sheet.csv
+  training_labels_v3.csv candidate/planet rows -> freezes/stage_h_candidate_followup_candidate_planet_inventory.csv
+  training_labels_v3.csv Stage H target decisions -> freezes/stage_h_candidate_followup_decisions.csv
+
+training_label_v3 counts:
+  binary_system: 2
+  candidate_like: 3
+  low_priority_negative: 5
+  noise_or_artifact: 19
+  planet_like: 2
+  uncertain_hold: 13
+  variable_or_artifact: 1
+
+science_binary_v3 counts:
+  not_science_like: 31
+  science_like: 5
+  unresolved: 9
+
+final candidate_like / planet_like list:
+  EPIC_211534076: candidate_like (recovered_known_unconfirmed_candidate)
+  EPIC_211759361: candidate_like (candidate_with_caveat)
+  EPIC_211954033: candidate_like (promote_candidate_alias_check)
+  EPIC_211889692: planet_like (recovered_known_confirmed_planet)
+  EPIC_212001099: planet_like (promote_primary_candidate)
+
+Stage H manual follow-up decisions:
+  EPIC_211404127:
+    training_label_v3: uncertain_hold
+    science_binary_v3: unresolved
+    ledger_status: candidate_needs_manual_followup
+    ledger_priority: followup_eb_variable_risk
+  EPIC_211759361:
+    training_label_v3: candidate_like
+    science_binary_v3: science_like
+    ledger_status: candidate_with_caveat
+    ledger_priority: medium_high
+  EPIC_211908778:
+    training_label_v3: uncertain_hold
+    science_binary_v3: unresolved
+    ledger_status: candidate_demoted_after_stage_h
+    ledger_priority: do_not_promote_without_external_evidence
+
+duplicate EPIC check:
+  training_labels_v3.csv: none
+  final_candidate_master_ledger.csv: none
+
+model_policy:
+  active_keras_model_frozen: models/k2_nocrop_flux_seed46_split303.best.keras
+  model_retraining_started: false

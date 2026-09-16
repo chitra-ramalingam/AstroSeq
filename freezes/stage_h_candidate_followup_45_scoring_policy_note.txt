@@ -1,0 +1,173 @@
+Post-Stage-H Scoring Policy Note
+================================
+
+Freeze
+------
+- freeze_name: stage_h_candidate_followup_45
+- created_at: 2026-05-07
+- output: freezes/stage_h_candidate_followup_45_scoring_policy_note.txt
+
+Inputs
+------
+- freezes/stage_h_candidate_followup_45_score_audit_summary.txt
+- freezes/stage_h_candidate_followup_45_threshold_sweep.csv
+- freezes/stage_h_candidate_followup_45_top_k_precision.csv
+- freezes/stage_h_candidate_followup_45_science_like_below_strong_support.csv
+- freezes/stage_h_candidate_followup_45_false_positive_pass_rows.csv
+- freezes/stage_h_candidate_followup_manifest.txt
+
+Model Status
+------------
+The active Keras model remains frozen:
+
+models/k2_nocrop_flux_seed46_split303.best.keras
+
+No model retraining was started. The Stage H audit re-evaluated existing
+frozen score artifacts against the post-Stage-H labels and decisions; it did
+not initiate training or use score results to update labels or the ledger.
+
+Post-Stage-H Label State
+------------------------
+The post-Stage-H binary evaluation set contains:
+
+- science_like: 5
+- not_science_like: 31
+- unresolved excluded: 9
+- binary_eval_rows: 36
+
+The candidate list is cleaner after demoting EPIC_211404127 and
+EPIC_211908778 from candidate_like / science_like to uncertain_hold /
+unresolved. Those rows remain follow-up or do-not-promote cases, not closed
+candidate positives.
+
+Keras Flux Score Policy
+-----------------------
+The Keras flux score remains a recall and triage signal only. It must not be
+used as a precision gate or as a direct promotion authority.
+
+At the broad operational triage threshold:
+
+- keras_flux_p_science_like >= 0.60
+- predicted=34
+- tp=5
+- fp=29
+- tn=2
+- fn=0
+- precision=0.147058823529
+- recall=1.0
+- f1=0.25641025641
+
+Top-k precision confirms that the flux score is useful for surfacing objects
+for review, but not clean enough to promote by score alone:
+
+- top_5 precision: 0.4
+- top_10 precision: 0.2
+
+Policy: use high Keras flux scores to route rows into vetting, manual review,
+or follow-up queues. Do not treat a high flux score as candidate confirmation,
+and do not use a low-but-still-reviewable flux score to demote a manually
+supported candidate.
+
+Stage G Calibrated Score Policy
+-------------------------------
+Stage G remains a support and prioritization layer only. It is not a label
+override, not a replacement for manual review, and not an automatic ledger
+promotion or rejection rule.
+
+At the strong-support threshold after Stage H:
+
+- stage_g_calibrated_score >= 0.70
+- predicted=3
+- tp=2
+- fp=1
+- tn=30
+- fn=3
+- precision=0.666666666667
+- recall=0.4
+- f1=0.5
+
+Policy: Stage G >= 0.70 is a high-priority support signal, not automatic
+promotion. Stage G < 0.70 for a science_like row is a feature-review signal,
+not automatic demotion.
+
+Comparison With Pre-Stage-H State
+---------------------------------
+Precision did not strictly improve from demoting EPIC_211404127 and
+EPIC_211908778.
+
+Stage G >= 0.70 precision stayed 0.667. Recall and F1 improved because those
+two weak-support positives became unresolved/excluded rather than counted as
+missed positives.
+
+Keras flux precision at >= 0.60 fell from 7/36 = 0.194 pre-Stage-H to
+5/34 = 0.147 post-Stage-H. This is expected because the two demoted rows had
+been counted as positives before, even though Stage H judged them too risky
+for candidate_like.
+
+The candidate list did get cleaner: the two risky weak-support rows were
+removed from science_like/candidate_like and moved to unresolved
+follow-up/hold.
+
+Stage G still remains support-only. The frozen policy says it must not
+override manual labels, Stage D/F vetting, visual review, or ledger decisions.
+
+Specific Row Decisions
+----------------------
+EPIC_211842439 remains a strong_support false positive and must stay
+do-not-promote unless new external evidence or a fresh manual review explicitly
+changes that status.
+
+- training_label_v3: uncertain_hold
+- science_binary_v3: not_science_like
+- stage_g_support_tier: strong_support
+- stage_g_calibrated_score: 0.82419685098
+- flux_p_science_like: 0.660845279694
+- final_candidate_status: hold_low_priority_candidate
+
+EPIC_211759361 remains candidate_with_caveat despite weak_support. Its manual
+Stage H evidence is stronger than the Stage G score alone:
+reasonable-depth primary, good odd/even agreement, no phase-0.5 secondary, and
+acceptable event support, with caveats for moderate SNR, high-ish OOT
+variability, and 2P/3 alias support.
+
+- training_label_v3: candidate_like
+- science_binary_v3: science_like
+- stage_g_support_tier: weak_support
+- stage_g_calibrated_score: 0.370758292198
+- flux_p_science_like: 0.710497200489
+- final_candidate_status: candidate_with_caveat
+
+EPIC_211404127 was demoted from candidate_like to uncertain_hold because the
+signal is real but too deep/high-SNR and EB/variable-risk for clean
+candidate_like status.
+
+EPIC_211908778 was demoted from candidate_like to uncertain_hold because the
+odd/even mismatch, high OOT variability, and alias structure are
+EB/variable-like.
+
+Operational Conclusion
+----------------------
+Stage H improved label quality, not raw model precision.
+
+The active K2 flux model remains frozen:
+
+models/k2_nocrop_flux_seed46_split303.best.keras
+
+Do not retrain or fine-tune the Keras model from this audit.
+
+Use:
+
+- flux_p_science_like as broad recall / triage signal
+- Stage G / Stage G v2 as support and prioritization
+- Stage D/F diagnostics and manual visual review as authoritative evidence
+- final_candidate_master_ledger.csv only through deliberate ledger review
+
+No score-only promotion or demotion should be applied.
+
+Ledger Policy
+-------------
+Do not use score alone to update final_candidate_master_ledger.csv.
+
+Any future ledger change must be a separate deliberate review action supported
+by manual labels, Stage D/F diagnostics, visual review, external evidence, or
+another documented non-score-only basis.

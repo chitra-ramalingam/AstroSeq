@@ -1,0 +1,48 @@
+{
+  "allowed_decisions": [
+    "confirmed_planet",
+    "candidate_like",
+    "false_positive_eb_or_variable",
+    "reject_as_noise_or_artifact",
+    "retain_cross_class_conflict"
+  ],
+  "catalogue_object_solution_row_count": 26,
+  "conflict_category_counts": {
+    "archive_object_mixed_candidate_false_positive": 1,
+    "internal_eb_variable_vs_archive_candidate": 3,
+    "internal_noise_artifact_vs_archive_candidate": 1,
+    "internal_noise_artifact_vs_archive_false_positive": 6
+  },
+  "conflict_host_count": 11,
+  "existing_feature_coverage": {
+    "accessible_512_sample_tensor": 10,
+    "accessible_local_light_curve": 10,
+    "existing_128d_embedding": 10,
+    "existing_cnn_probability": 10,
+    "nominal_numerical_diagnostics": 8,
+    "p_half_p_2p_diagnostics": 0,
+    "trusted_period": 0
+  },
+  "non_actions": [
+    "no_adjudication_applied",
+    "no_label_change",
+    "no_loss_eligibility_change",
+    "no_training",
+    "no_split_assignment",
+    "no_cnn_operation",
+    "no_feature_generation",
+    "no_gatevetter_verdict_used_as_feature"
+  ],
+  "physical_loss_eligible_host_count": 0,
+  "schema_version": "phase2_conflict_review_packet_v1.0.0",
+  "source_sha256": {
+    "data/phase2/phase2_expanded_catalogue_evidence.parquet": "ca156b82c024a725ed3f2c7eeca9a7a333aabd86d0add12852961b83266a2e48",
+    "data/phase2/phase2_expanded_label_table.parquet": "d4ef8c05e50795b70d78307e982faf50a4978dd3e87148b4dbeb28a8d1fef621",
+    "data/phase2/phase2_feature_table.parquet": "22e0423c020fd2d3bc71b8d80351d9ce0fbc23b7271a5aa56fd9fa3204b10fc0",
+    "docs/phase2/phase2_expanded_label_conflicts.csv": "78a05992eb4c32338388780c85c838e4d7382ffcbda26182682e14127802a24e",
+    "docs/phase2/phase2_label_inventory.csv": "1b28a2883856cca2d5b0b103d9c802fd7193aabe7ba70a941ed7466fd75ec852",
+    "plots/k2_batch/final_candidate_master_ledger.csv": "da96b94e8f3059cc5f13f43329c0b36a01cab830f3d4281088246b0d39313459",
+    "plots/k2_batch/master_vetted_catalog/manual_vetting_decisions_ledger.csv": "d9a7efc8e95059b7a3f6a2e7ad77ce6828f999c13b56f928d031519b10a1d429"
+  },
+  "unresolved_host_count": 11
+}

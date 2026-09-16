@@ -1,0 +1,16 @@
+epic_id,n_events_long_good,n_events_ge_10_cadences,max_shape_score,spike_fraction_2cadence,depth_ratio,stage_r_reason
+EPIC_211306307,7,13,0.8840099233311842,0.2666666666666666,64.91501476538352,promote: 7 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=23; spike_fraction_2cadence=0.267
+EPIC_211404127,9,15,0.8714097297986186,0.217391304347826,45.83294928205858,promote: 9 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=24; spike_fraction_2cadence=0.217
+EPIC_211409604,8,14,0.8856846318009106,0.1333333333333333,36.43377180860857,promote: 8 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=22; spike_fraction_2cadence=0.133
+EPIC_211490307,11,16,0.8194936608105479,0.1935483870967742,29.87992459434132,promote: 11 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=24; spike_fraction_2cadence=0.194
+EPIC_211525754,7,14,0.8065152288077873,0.217391304347826,9.37481331028957,promote: 7 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=24; spike_fraction_2cadence=0.217
+EPIC_211538087,10,14,0.8317946248071857,0.2058823529411764,42.462798742015,promote: 10 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=24; spike_fraction_2cadence=0.206
+EPIC_211598703,13,17,0.8241932430833396,0.3,47.90929311449544,promote: 13 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=24; spike_fraction_2cadence=0.300
+EPIC_211726466,2,14,0.7614309575788012,0.3448275862068966,56.955504262507176,promote: 2 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=20; spike_fraction_2cadence=0.345
+EPIC_211791780,9,13,0.821541034646183,0.1071428571428571,22.428621874212997,promote: 9 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=22; spike_fraction_2cadence=0.107
+EPIC_211818652,9,19,0.8555259411426679,0.1481481481481481,6.5483166766906535,promote: 9 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=23; spike_fraction_2cadence=0.148
+EPIC_211878672,12,23,0.8853581922368572,0.2424242424242424,25.93119712533738,promote: 12 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=23; spike_fraction_2cadence=0.242
+EPIC_211968088,2,7,0.8258115219948668,0.3157894736842105,24.37512537959085,promote: 2 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=24; spike_fraction_2cadence=0.316
+EPIC_211972767,8,23,0.8169500641238717,0.0909090909090909,7.738778295429903,promote: 8 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=24; spike_fraction_2cadence=0.091
+EPIC_211980250,2,14,0.7928053926538803,0.0,63.07972491138453,promote: 2 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=24; spike_fraction_2cadence=0.000
+EPIC_212001099,8,19,0.8263117277737821,0.1071428571428571,13.907826780338732,promote: 8 events have duration_cadences>=10 and shape_score>=0.74; max_duration_cadences=24; spike_fraction_2cadence=0.107

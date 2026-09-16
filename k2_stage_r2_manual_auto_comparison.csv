@@ -1,0 +1,13 @@
+epic_id,manual_label,auto_label,match,mismatch_reason,key_metrics
+EPIC_211529255,reject_as_noise_or_artifact,hold_for_review,False,manual=reject_as_noise_or_artifact; auto=hold_for_review; auto_reason=hold: exactly 1 strong event has duration_cadences>=5 and shape_score>=0.74; promote long-good count=0,n_total=18; n_ge10=0; n_shape_ge074=1; n_long_good=0; max_shape=0.769; max_duration=6; spike2_frac=0.611; depth_ratio=11.1
+EPIC_212007631,reject_as_noise_or_artifact,reject_as_noise_or_artifact,True,,n_total=44; n_ge10=0; n_shape_ge074=2; n_long_good=0; max_shape=0.753; max_duration=7; spike2_frac=0.455; depth_ratio=28.4
+EPIC_211805106,reject_as_noise_or_artifact,reject_as_noise_or_artifact,True,,n_total=44; n_ge10=0; n_shape_ge074=0; n_long_good=0; max_shape=0.713; max_duration=5; spike2_frac=0.545; depth_ratio=21.2
+EPIC_211759736,reject_as_noise_or_artifact,reject_as_noise_or_artifact,True,,n_total=29; n_ge10=1; n_shape_ge074=0; n_long_good=0; max_shape=0.720; max_duration=10; spike2_frac=0.379; depth_ratio=42.2
+EPIC_211698887,reject_as_noise_or_artifact,reject_as_noise_or_artifact,True,,n_total=23; n_ge10=0; n_shape_ge074=0; n_long_good=0; max_shape=0.719; max_duration=4; spike2_frac=0.609; depth_ratio=11.5
+EPIC_212023491,hold_for_review,hold_for_review,True,,n_total=31; n_ge10=0; n_shape_ge074=1; n_long_good=0; max_shape=0.760; max_duration=7; spike2_frac=0.645; depth_ratio=39.2
+EPIC_211324054,reject_as_noise_or_artifact,reject_as_noise_or_artifact,True,,n_total=21; n_ge10=0; n_shape_ge074=0; n_long_good=0; max_shape=0.708; max_duration=7; spike2_frac=0.714; depth_ratio=21.5
+EPIC_211394018,reject_as_noise_or_artifact,reject_as_noise_or_artifact,True,,n_total=32; n_ge10=0; n_shape_ge074=0; n_long_good=0; max_shape=0.721; max_duration=8; spike2_frac=0.594; depth_ratio=17.9
+EPIC_211633247,reject_as_noise_or_artifact,hold_for_review,False,manual=reject_as_noise_or_artifact; auto=hold_for_review; auto_reason=hold: exactly 1 strong event has duration_cadences>=5 and shape_score>=0.74; promote long-good count=0,n_total=42; n_ge10=0; n_shape_ge074=1; n_long_good=0; max_shape=0.748; max_duration=7; spike2_frac=0.405; depth_ratio=34.7
+EPIC_211791780,promote_to_deeper_eval,promote_to_deeper_eval,True,,n_total=28; n_ge10=13; n_shape_ge074=9; n_long_good=9; max_shape=0.822; max_duration=22; spike2_frac=0.107; depth_ratio=22.4
+EPIC_211945111,promote_to_deeper_eval,promote_to_deeper_eval,True,,n_total=34; n_ge10=9; n_shape_ge074=3; n_long_good=3; max_shape=0.765; max_duration=22; spike2_frac=0.294; depth_ratio=29
+EPIC_211836788,promote_to_deeper_eval,promote_to_deeper_eval,True,,n_total=22; n_ge10=7; n_shape_ge074=2; n_long_good=2; max_shape=0.775; max_duration=24; spike2_frac=0.318; depth_ratio=33.9

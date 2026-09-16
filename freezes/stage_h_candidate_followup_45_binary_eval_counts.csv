@@ -1,0 +1,9 @@
+metric,count
+total_training_rows,45
+science_like,5
+not_science_like,31
+unresolved_excluded,9
+binary_eval_rows,36
+scored_training_rows,45
+scored_binary_eval_rows,36
+missing_score_rows,0

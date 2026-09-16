@@ -1,0 +1,30 @@
+GateVetter v0.2 batch-3 manual top-hold review summary
+review_batch: gatevetter_v0_2_batch_3_top_hold_review
+reviewed_at: 2026-06-22
+reviewer: user_provided_manual_review
+
+Stage G queue data rows: 0
+Manual decisions supplied and logged: 9
+Input note: 9 reviewed top-hold objects are now ledgered.
+Action: no CNN retraining performed; GateVetter v0.2 thresholds unchanged.
+
+manual_label counts: {'uncertain_hold_period_ambiguous': 1, 'reject_as_noise_or_artifact': 4, 'low_priority_negative': 3, 'variable_or_possible_eb': 1}
+manual_label_family counts: {'hold': 1, 'negative': 8}
+high/moderate-high CNN morphology negatives logged: ['EPIC_211384981', 'EPIC_211504156', 'EPIC_211613728', 'EPIC_211322563']
+
+Files updated/created:
+- gatevetter_v0_2_batch_3_manual_hold_review_decisions.csv
+- gatevetter_v0_2_batch_3_manual_hold_review_summary.txt
+- cnn_manual_review_error_ledger.csv
+- plots/k2_batch/final_candidate_master_ledger.csv appended rows: 0; refreshed review-batch rows: 9
+
+Reviewed hold ranks:
+- EPIC_211912465: hold_rank=1; manual_label=uncertain_hold_period_ambiguous; reason_status=complete_user_supplied
+- EPIC_211384981: hold_rank=5; manual_label=reject_as_noise_or_artifact; reason_status=complete_user_supplied
+- EPIC_211490678: hold_rank=3; manual_label=low_priority_negative; reason_status=complete_user_supplied
+- EPIC_211504156: hold_rank=4; manual_label=variable_or_possible_eb; reason_status=complete_user_supplied
+- EPIC_211613728: hold_rank=6; manual_label=reject_as_noise_or_artifact; reason_status=complete_user_supplied
+- EPIC_211705654: hold_rank=9; manual_label=reject_as_noise_or_artifact; reason_status=complete_user_supplied
+- EPIC_211322563: hold_rank=2; manual_label=reject_as_noise_or_artifact; reason_status=complete_user_supplied
+- EPIC_211914980: hold_rank=7; manual_label=low_priority_negative; reason_status=complete_user_supplied
+- EPIC_212029715: hold_rank=8; manual_label=low_priority_negative; reason_status=complete_user_supplied

@@ -1,0 +1,28 @@
+GateVetter v0.3 EPIC-level traceability summary
+status=design_traceability_only_v0_3_not_implemented
+source_review_set=GateVetter_v0.2_deep_review
+rows=15
+unique_epics=15
+labels_changed=0
+thresholds_changed=0
+new_batches_run=0
+
+change_classification_counts
+no_change_required=3
+recording_change_only=2
+stage_g_logic_change_required=10
+unsupported=0
+
+mandatory_2P_competing_EB_veto_support_count=10
+mandatory_2P_competing_EB_veto_supporting_epics=EPIC_211687388|EPIC_211768304|EPIC_211959909|EPIC_211485867|EPIC_211387236|EPIC_211889082|EPIC_211816343|EPIC_212029934|EPIC_211351798|EPIC_211696209
+
+numerical_integrity_check_support_count=1
+numerical_integrity_check_supporting_epics=EPIC_211696209
+
+no_behavioral_change_count=5
+no_behavioral_change_epics=EPIC_211624954|EPIC_211996306|EPIC_211912465|EPIC_211845034|EPIC_211431812
+strict_no_change_required_count=3
+strict_no_change_required_epics=EPIC_211996306|EPIC_211845034|EPIC_211431812
+
+interpretation=All 15 v0.2 outcomes prevented Stage G promotion. Ten EB/variable decisions support making the 2P competing-EB veto explicit in v0.3 rather than relying on incidental v0.2 hold gates. EPIC_211696209 also supports pre-scoring numerical-integrity checks. Five targets require no behavioral change; two of those need recording changes only.
+source_exception=EPIC_211768304 has validation_summary_1.json and deep_review_panel_1.png locally although the ledger records unsuffixed names; the existing suffixed diagnostic was read without renaming or modification.

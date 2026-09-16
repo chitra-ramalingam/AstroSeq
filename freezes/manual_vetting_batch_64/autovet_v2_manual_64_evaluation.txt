@@ -1,0 +1,25 @@
+AutoVet v2 manual-64 deterministic evaluation
+generated_at=2026-06-01T19:11:24
+source=manual_64_training_view.csv
+training=not_run
+cnn_role=frozen transit_morphology_score only
+
+Confusion matrix, holds excluded
+true_positive=0
+false_positive=0
+false_negative=4
+true_negative=44
+precision=0.000
+recall=0.000
+candidate_or_hold_review_capture=15/20
+candidate_or_hold_review_capture_rate=0.750
+
+Label counts
+- autovet_v2_false_positive_eb_or_variable: 6
+- autovet_v2_reject_noise_or_artifact: 11
+- autovet_v2_review_signal_with_caveats: 47
+
+Policy
+- No CNN retraining was run.
+- `autovet_v2_candidate_priority` is the only automatic positive prediction label.
+- `autovet_v2_review_signal_with_caveats` is review routing, not promotion authority.

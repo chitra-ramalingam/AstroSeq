@@ -1,0 +1,31 @@
+Phase 2 label inventory summary (corrected 2026-08-05)
+======================================================
+
+unique_labelled_epics=706
+physical_loss_eligible=265
+confirmed_gold_positives=0
+silver_candidate_positives=4
+bronze_excluded=2
+external_confirmation_pending=1
+physical_loss_eligible_candidate_positive=4
+physical_loss_eligible_eb_variable=87
+physical_loss_eligible_noise_artifact=174
+uncertain_total=41
+high_cnn_hard_negatives=258
+explicit_high_value_hard_negative_corrections=2
+
+Normalized class counts (current corrected label; historical originals retained in CSV)
+candidate_like=379
+false_positive_eb_or_variable=95
+reject_as_noise_or_artifact=191
+uncertain_hold=41
+
+Coverage by corrected feature-table class
+candidate_like: rows=7, eligible=4, diagnostics=7, eligible_diagnostics=4, embeddings=7, eligible_embeddings=4
+false_positive_eb_or_variable: rows=87, eligible=87, diagnostics=74, eligible_diagnostics=74, embeddings=87, eligible_embeddings=87
+reject_as_noise_or_artifact: rows=174, eligible=174, diagnostics=120, eligible_diagnostics=120, embeddings=174, eligible_embeddings=174
+
+Notes
+- Historical label/review evidence remains in all_label_evidence and the append-only correction log.
+- Uncertain rows and excluded/pending candidate tiers do not enter the hard physical loss.
+- high_cnn_hard_negatives means eligible corrected EB/variable or noise/artifact rows with accepted frozen CNN probability >= 0.5.

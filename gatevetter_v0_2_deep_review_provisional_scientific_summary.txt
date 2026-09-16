@@ -1,0 +1,25 @@
+GateVetter v0.2 deep-review provisional scientific summary
+review_status=complete_15_of_15
+unique_shortlist_targets=15
+unique_reviewed_targets=15
+uncertain_hold_positive=1
+false_positive_eb_or_variable=11
+reject_as_noise_or_artifact=3
+candidate_like=0
+pending_manual_review=0
+promoted_candidates=0
+
+EPIC_211845034_status=completed_manual_review_found_locally
+EPIC_211845034_original_review_date=2026-06-23
+EPIC_211845034_original_review_source=gatevetter_v0_2_batch_10_manual_review_decisions.csv; codex_visual_review
+EPIC_211845034_original_manual_label=variable_or_possible_eb
+EPIC_211845034_reconciled_final_label=false_positive_eb_or_variable
+EPIC_211845034_deep_review_panel=plots/k2_batch/gatevetter_v0_2_deep_review/EPIC_211845034/deep_review_panel.png
+EPIC_211845034_validation_summary=plots/k2_batch/gatevetter_v0_2_deep_review/EPIC_211845034/validation_summary.json
+
+scientific_interpretation=The shortlist yields one unpromoted uncertain positive hold, eleven EB/variable false positives, and three noise/artifact rejects. No candidate-like target is promoted.
+batching_status=paused_no_new_batches_run
+gatevetter_v0_2_status=unchanged_thresholds_unchanged
+cnn_status=unchanged_not_retrained
+gatevetter_v0_3_status=not_implemented
+diagnostic_sources=unchanged

@@ -1,0 +1,62 @@
+{
+  "archive_cross_class_conflict_host_count": 1,
+  "candidate_evidence_host_count": 920,
+  "catalogue_object_solution_rows": 4064,
+  "catalogue_unique_epic_hosts": 1559,
+  "confirmed_evidence_host_count": 414,
+  "corrected_class_counts": {
+    "candidate_like": 898,
+    "confirmed_planet": 414,
+    "cross_class_conflict": 11,
+    "false_positive_eb_or_variable": 328,
+    "reject_as_noise_or_artifact": 184,
+    "uncertain_hold": 37
+  },
+  "existing_feature_coverage": {
+    "accessible_512_sample_tensors": 543,
+    "accessible_local_light_curves": 729,
+    "existing_128d_embeddings": 268,
+    "existing_cnn_probabilities": 268,
+    "nominal_numerical_diagnostics": 201,
+    "p_half_p_2p_diagnostics": 9,
+    "trusted_periods": 5
+  },
+  "expanded_cross_class_conflict_host_count": 11,
+  "expanded_unique_epic_hosts": 1872,
+  "false_positive_or_refuted_evidence_host_count": 250,
+  "internal_unique_epic_hosts": 706,
+  "multi_planet_or_object_host_count": 168,
+  "non_actions": [
+    "no_training",
+    "no_split_freeze",
+    "no_cnn_load_or_change",
+    "no_candidate_search",
+    "no_new_embeddings",
+    "no_new_diagnostics",
+    "no_catalogue_download"
+  ],
+  "physical_loss_eligible_counts_by_class": {
+    "candidate_like": 895,
+    "confirmed_planet": 414,
+    "false_positive_eb_or_variable": 321,
+    "reject_as_noise_or_artifact": 167
+  },
+  "protected_metadata_excluded_from_scientific_matrix": [
+    "archive_disposition",
+    "catalogue_class",
+    "catalogue_reference",
+    "correction_basis",
+    "gatevetter_action",
+    "gatevetter_decision",
+    "gatevetter_recommendation",
+    "manual_labels",
+    "manual_reasons",
+    "normalized_target_label",
+    "physical_loss_eligible",
+    "positive_evidence_tier",
+    "training_role"
+  ],
+  "schema_version": "phase2_expanded_label_summary_v1.0.0",
+  "scientific_feature_columns_added": [],
+  "split_assigned_host_count": 0
+}

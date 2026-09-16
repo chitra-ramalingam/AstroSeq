@@ -1,0 +1,11 @@
+GateVetter v0.2 deep-review shortlist
+generated_at=2026-07-21T22:01:06
+targets=15
+trusted_periods=1
+period_ambiguous=14
+new_batches=stopped
+gatevetter_v0_2=unchanged
+cnn=unchanged_not_retrained
+shortlist=gatevetter_v0_2_deep_review_shortlist.csv
+period_comparison=gatevetter_v0_2_deep_review_period_comparison.csv
+manifest=gatevetter_v0_2_deep_review_manifest.csv

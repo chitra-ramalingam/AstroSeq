@@ -43,3 +43,60 @@ splits/*
 *.png
 *cpython*
 plots/*
+tmp_pycache/*
+
+# Local Python environments and caches
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Generated outputs and bundled dependencies
+outputs/
+**/node_modules/
+pet_runs/
+
+# Temporary working directories
+tmp*/
+
+# Generated root-level GateVetter batch products. Keep human review records.
+/gatevetter_v0_2_batch*
+!/gatevetter_v0_2_batch*_manual_review_decisions.csv
+!/gatevetter_v0_2_batch*_manual_review_summary.txt
+!/gatevetter_v0_2_batch*_manual_hold_review_decisions.csv
+!/gatevetter_v0_2_batch*_manual_hold_review_summary.txt
+!/gatevetter_v0_2_batch*_manual_reject_review_decisions.csv
+!/gatevetter_v0_2_batch*_manual_reject_review_summary.txt
+/gatevetter_v0_1_*
+/gatevetter_v0_2_unseen_*
+/gatevetter_v0_2_rolling_batch_summary.csv
+/gatevetter_v0_2_failure_mode_comparison.txt
+/gatevetter_v0_failure_report.txt
+/gatevetter_v0_manual64_*
+/gatevetter_v0_rule_trace.csv
+/gatevetter_v0_stage_g_queue.csv
+
+# Generated evaluation, ranking, and queue products
+/autovet_v2_*
+/unseen_*
+/candidates_*.csv
+/c5_star_candidates_*.csv
+/top_20_by_blind_score.csv
+/bottom_20_by_blind_score.csv
+/k2_hybrid_*.csv
+/training_labels_v3_eval_*
+/training_labels_v3_label_counts.csv
+/manual_64_*
+/manual_vetting_64_*
+/stage_g_deeper_eval_queue_manual_64.csv
+
+# Generated Phase 2 datasets; retain the immutable raw catalogue and manifest.
+/data/phase2/*.parquet
+/data/phase2/*.npz
+/data/phase2/phase2_cnn_scores.csv
+/data/phase2/phase2_feature_table_preview.csv
+/data/phase2/phase2_positive_period_diagnostics.csv
+/data/phase2/catalogues/phase2_k2_catalogue_rows.parquet
+
+# Locally trained model checkpoints
+/k2_scan_w512_s128_v3*.keras

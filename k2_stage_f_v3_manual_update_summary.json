@@ -1,0 +1,42 @@
+{
+  "manual_rows_before": 10,
+  "manual_rows_after": 13,
+  "rows_added": [
+    "EPIC_211306307",
+    "EPIC_211409604",
+    "EPIC_211770415"
+  ],
+  "rows_updated": [
+    "EPIC_211746706",
+    "EPIC_211598703",
+    "EPIC_211537297",
+    "EPIC_211404127",
+    "EPIC_211759361",
+    "EPIC_211423229",
+    "EPIC_211562803",
+    "EPIC_211631955",
+    "EPIC_211791780",
+    "EPIC_211821200"
+  ],
+  "review_sheets_touched": [
+    "k2_stage_e_v3_recovery_batch2_visual_review_sheet.csv",
+    "k2_stage_e_v3_recovery_batch3_visual_review_sheet.csv",
+    "k2_stage_e_v3_recovery_batch4_visual_review_sheet.csv"
+  ],
+  "reviewed_rows": 13,
+  "epics_present_in_validation_queue_before_rebuild": [
+    "EPIC_211306307",
+    "EPIC_211409604",
+    "EPIC_211770415"
+  ],
+  "manual_stage_f_label_counts": {
+    "hold_deeper_eval": 7,
+    "reject_as_noise_or_artifact": 4,
+    "promote_to_deeper_eval": 2
+  },
+  "manual_science_binary_counts": {
+    "unresolved": 7,
+    "not_science_like": 4,
+    "science_like": 2
+  }
+}

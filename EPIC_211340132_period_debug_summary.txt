@@ -1,0 +1,29 @@
+EPIC_211340132 period debug summary
+generated_at=2026-06-06T18:37:28
+
+Guardrail
+- P=3.02388 d is a visual-packet event-spacing fallback and remains provisional.
+- This comparison does not update labels, GateVetter thresholds, or validation_period_days.
+
+Historical provenance
+- Historical period-search output: P=9.153408014513843 d, center_phase=0.3300506872548972.
+- Source: plots/k2_batch/20260227_192148/period_shortlist_best.csv.
+
+Comparison
+- P=3.023880 d (visual_packet_fallback_provisional): depth=0.007075913; SNR=10.584; odd_even=0.95923; OOT/depth=0.86934; secondary/primary=0; event_family=20; coherence=moderate (0.6236); alias_risk=low.
+- P=9.153408 d (historical_period_search): depth=0.0065075228; SNR=26.044; odd_even=0.84949; OOT/depth=1.1814; secondary/primary=0; event_family=6; coherence=moderate (0.7142); alias_risk=moderate.
+- P=1.511940 d (half_visual_fallback): depth=0.0070371168; SNR=13.197; odd_even=0.55504; OOT/depth=0.11499; secondary/primary=-5.544e-05; event_family=9; coherence=moderate (0.5562); alias_risk=high.
+- P=6.047760 d (double_visual_fallback): depth=0.0067007215; SNR=13.267; odd_even=0.82093; OOT/depth=0.81535; secondary/primary=0.12145; event_family=12; coherence=strong (0.7748); alias_risk=moderate.
+- P=18.306816 d (double_historical_period): depth=0.0059779289; SNR=10.298; odd_even=0.50793; OOT/depth=1.1511; secondary/primary=0.41086; event_family=5; coherence=strong (0.7525); alias_risk=moderate.
+
+Debug interpretation
+- Highest event-stack coherence in this five-period comparison: P=6.047760 d (0.7748).
+- Fallback P=3.02388 d: coherence=0.6236, alias_risk=low, odd_even=0.95923.
+- Historical P=9.153408 d: coherence=0.7142, alias_risk=moderate, odd_even=0.84949.
+- P=6.04776 d has the highest coherence, but its folded-primary SNR is only 0.7805; its strong event-family SNR does not independently confirm a coherent folded transit.
+- P=9.153408 d has event-family SNR=26.044, but folded-primary depth=0 and SNR=0.
+- Debug conclusion: P=3.02388 d is not trusted. The period remains ambiguous; P=6.04776 d and historical P=9.153408 d are the leading manual-review comparisons, with neither confirmed by the folded-light-curve diagnostic.
+- Harmonic structure remains part of the diagnosis; no trusted period is forced by this script.
+
+metrics_csv=EPIC_211340132_period_comparison_metrics.csv
+comparison_panel=EPIC_211340132_period_comparison_panel.png

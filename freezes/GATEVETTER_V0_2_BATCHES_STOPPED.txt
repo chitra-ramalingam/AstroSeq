@@ -1,0 +1,8 @@
+GateVetter v0.2 new-batch stop marker
+
+Status: STOPPED
+Reason: Zero Stage G rows across completed v0.2 batches; deep review requested before tuning.
+Scope: Blocks scripts/run_gatevetter_v0_2_batch_n.py from launching another batch.
+Rules: GateVetter v0.2 rules remain unchanged.
+Model: CNN remains unchanged and must not be retrained as part of this review.
+Resume condition: Explicitly remove this marker only after the deep-review decision.

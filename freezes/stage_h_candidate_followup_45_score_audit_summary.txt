@@ -1,0 +1,87 @@
+Stage H Candidate Follow-up 45 Score Audit
+===========================================
+
+Inputs
+------
+- labels: freezes/training_labels_v3_stage_h_candidate_followup_45.csv
+- frozen active Keras model: models/k2_nocrop_flux_seed46_split303.best.keras
+- existing scores: freezes/stage_g_calibrated_ranking_layer.csv
+- Stage G v2 tiers: freezes/stage_g_v2_support_tier_review.csv
+
+Policy
+------
+- Read-only score audit.
+- No model retraining started.
+- Existing frozen Keras flux scores were re-evaluated against updated labels; model inference was not rerun.
+
+Binary Eval Counts
+------------------
+- science_like: 5
+- not_science_like: 31
+- unresolved excluded: 9
+- binary_eval_rows: 36
+
+Operational Thresholds
+----------------------
+- keras_flux_p_science_like @ 0.6: predicted=34 tp=5 fp=29 tn=2 fn=0 precision=0.147058823529 recall=1 f1=0.25641025641
+- stage_g_calibrated_score @ 0.7: predicted=3 tp=2 fp=1 tn=30 fn=3 precision=0.666666666667 recall=0.4 f1=0.5
+
+Top-K Precision
+---------------
+- keras_flux_p_science_like top_3: tp=1 fp=2 precision=0.333333333333 epics=EPIC_211732801;EPIC_212001099;EPIC_211490307
+- keras_flux_p_science_like top_5: tp=2 fp=3 precision=0.4 epics=EPIC_211732801;EPIC_212001099;EPIC_211490307;EPIC_211759361;EPIC_211878672
+- keras_flux_p_science_like top_10: tp=2 fp=8 precision=0.2 epics=EPIC_211732801;EPIC_212001099;EPIC_211490307;EPIC_211759361;EPIC_211878672;EPIC_211598703;EPIC_211833851;EPIC_211947686;EPIC_211425098;EPIC_211887206
+- keras_flux_p_science_like top_20: tp=3 fp=17 precision=0.15 epics=EPIC_211732801;EPIC_212001099;EPIC_211490307;EPIC_211759361;EPIC_211878672;EPIC_211598703;EPIC_211833851;EPIC_211947686;EPIC_211425098;EPIC_211887206;EPIC_211569204;EPIC_211748059;EPIC_211739276;EPIC_211926132;EPIC_211554121;EPIC_211972767;EPIC_211423229;EPIC_211954033;EPIC_211396246;EPIC_211842439
+- stage_g_calibrated_score top_3: tp=2 fp=1 precision=0.666666666667 epics=EPIC_211842439;EPIC_212001099;EPIC_211534076
+- stage_g_calibrated_score top_5: tp=2 fp=3 precision=0.4 epics=EPIC_211842439;EPIC_212001099;EPIC_211534076;EPIC_211530033;EPIC_211396246
+- stage_g_calibrated_score top_10: tp=2 fp=8 precision=0.2 epics=EPIC_211842439;EPIC_212001099;EPIC_211534076;EPIC_211530033;EPIC_211396246;EPIC_211972200;EPIC_211525754;EPIC_211988531;EPIC_211490307;EPIC_211748059
+- stage_g_calibrated_score top_20: tp=4 fp=16 precision=0.2 epics=EPIC_211842439;EPIC_212001099;EPIC_211534076;EPIC_211530033;EPIC_211396246;EPIC_211972200;EPIC_211525754;EPIC_211988531;EPIC_211490307;EPIC_211748059;EPIC_211569204;EPIC_211954033;EPIC_211910082;EPIC_211551640;EPIC_212003686;EPIC_211520800;EPIC_211889692;EPIC_211955365;EPIC_211947686;EPIC_211739276
+
+False-Positive Pass Rows
+------------------------
+- keras_flux_p_science_like flux>=0.60: EPIC_211842439 label=uncertain_hold score=0.660845279694 status=hold_low_priority_candidate
+- keras_flux_p_science_like flux>=0.60: EPIC_211530033 label=noise_or_artifact score=0.636427342892 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211396246 label=noise_or_artifact score=0.667492508888 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211972200 label=binary_system score=0.659851789474 status=reject_as_planet_binary_system
+- keras_flux_p_science_like flux>=0.60: EPIC_211525754 label=noise_or_artifact score=0.613988161087 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211988531 label=uncertain_hold score=0.62759912014 status=secondary_hold
+- keras_flux_p_science_like flux>=0.60: EPIC_211490307 label=noise_or_artifact score=0.729034125805 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211748059 label=uncertain_hold score=0.681613683701 status=secondary_hold
+- keras_flux_p_science_like flux>=0.60: EPIC_211569204 label=noise_or_artifact score=0.685649871826 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211910082 label=noise_or_artifact score=0.636104226112 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211551640 label=noise_or_artifact score=0.63699734211 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_212003686 label=noise_or_artifact score=0.651907682419 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211520800 label=low_priority_negative score=0.653724551201 status=deprioritize_after_manual_visual_review
+- keras_flux_p_science_like flux>=0.60: EPIC_211955365 label=low_priority_negative score=0.620951473713 status=deprioritize_after_manual_visual_review
+- keras_flux_p_science_like flux>=0.60: EPIC_211947686 label=noise_or_artifact score=0.69991004467 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211739276 label=noise_or_artifact score=0.677273511887 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211972767 label=variable_or_artifact score=0.673350334167 status=reject_likely_variable_or_binary
+- keras_flux_p_science_like flux>=0.60: EPIC_211554121 label=noise_or_artifact score=0.675060272217 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211563576 label=noise_or_artifact score=0.645002007484 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211926132 label=uncertain_hold score=0.676177740097 status=secondary_hold
+- keras_flux_p_science_like flux>=0.60: EPIC_211833851 label=noise_or_artifact score=0.701998353004 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211732801 label=binary_system score=0.970463216305 status=reject_likely_eclipsing_binary
+- keras_flux_p_science_like flux>=0.60: EPIC_211598703 label=noise_or_artifact score=0.703751325607 status=reject_as_noise_or_artifact
+- keras_flux_p_science_like flux>=0.60: EPIC_211887206 label=low_priority_negative score=0.691662311554 status=deprioritize_after_manual_visual_review
+- keras_flux_p_science_like flux>=0.60: EPIC_211746706 label=noise_or_artifact score=0.649377048016 status=reject_as_noise_or_artifact
+- keras_flux_p_science_like flux>=0.60: EPIC_211423229 label=noise_or_artifact score=0.671370983124 status=reject_as_noise_or_artifact
+- keras_flux_p_science_like flux>=0.60: EPIC_211306307 label=noise_or_artifact score=0.622728407383 status=reject_as_noise_or_artifact
+- keras_flux_p_science_like flux>=0.60: EPIC_211425098 label=noise_or_artifact score=0.694255650043 status=reject_manual_false_positive
+- keras_flux_p_science_like flux>=0.60: EPIC_211878672 label=low_priority_negative score=0.70718228817 status=deprioritize_after_manual_visual_review
+- stage_g_calibrated_score stage_g>=0.70: EPIC_211842439 label=uncertain_hold score=0.82419685098 status=hold_low_priority_candidate
+
+Science-Like Rows Below Strong Support
+--------------------------------------
+- EPIC_211954033 label=candidate_like tier=review_support stage_g=0.55928650183 flux=0.668707787991 status=promote_candidate_alias_check
+- EPIC_211889692 label=planet_like tier=review_support stage_g=0.516237480665 flux=0.647940158844 status=recovered_known_confirmed_planet
+- EPIC_211759361 label=candidate_like tier=weak_support stage_g=0.370758292198 flux=0.710497200489 status=candidate_with_caveat
+
+Outputs
+-------
+- freezes/stage_h_candidate_followup_45_score_audit_scored_rows.csv
+- freezes/stage_h_candidate_followup_45_binary_eval_counts.csv
+- freezes/stage_h_candidate_followup_45_threshold_sweep.csv
+- freezes/stage_h_candidate_followup_45_top_k_precision.csv
+- freezes/stage_h_candidate_followup_45_false_positive_pass_rows.csv
+- freezes/stage_h_candidate_followup_45_science_like_below_strong_support.csv
+- freezes/stage_h_candidate_followup_45_score_audit_summary.txt

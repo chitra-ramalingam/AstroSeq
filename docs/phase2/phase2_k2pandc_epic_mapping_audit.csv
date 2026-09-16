@@ -1,0 +1,10 @@
+epic_id,archive_match_found,archive_object_ids,archive_k2_names,archive_dispositions,archive_disposition_references,archive_campaigns,archive_periods,cross_class_conflict,recommended_label_action,notes
+EPIC_211357782,False,,,,,,,False,no_archive_match_retain_current_status,No exact EPIC host match in this k2pandc snapshot.
+EPIC_211497712,False,,,,,,,False,no_archive_match_retain_current_status,No exact EPIC host match in this k2pandc snapshot.
+EPIC_211534076,False,,,,,,,False,no_archive_match_retain_current_status,No exact EPIC host match in this k2pandc snapshot.
+EPIC_211915147,True,EPIC 211915147.01,,FALSE POSITIVE,Yu et al. 2018,5 | 16 | 18,1.810708,False,archive_negative_supports_current_negative_no_automatic_change,Authoritative archive negative evidence agrees with the corrected internal class.
+EPIC_211953866,False,,,,,,,False,no_archive_match_retain_current_status,No exact EPIC host match in this k2pandc snapshot.
+EPIC_211889692,False,,,,,,,False,no_archive_match_retain_current_status,No exact EPIC host match in this k2pandc snapshot.
+EPIC_211682657,False,,,,,,,False,no_archive_match_retain_current_status,No exact EPIC host match in this k2pandc snapshot.
+EPIC_212001099,False,,,,,,,False,no_archive_match_retain_current_status,No exact EPIC host match in this k2pandc snapshot.
+EPIC_212024647,True,EPIC 212024647.01,,FALSE POSITIVE,Yu et al. 2018,5 | 16 | 18,3.696871,False,manual_adjudication_required_archive_negative_conflicts_with_internal_candidate,Archive negative evidence conflicts with internal candidate provenance; preserve both and adjudicate later.

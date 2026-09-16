@@ -1,0 +1,92 @@
+{
+  "audit_schema_version": "phase2_k2pandc_ingestion_audit_v1.0.0",
+  "counts": {
+    "campaign_unique_host_counts": {
+      "-1": 2,
+      "0": 51,
+      "1": 112,
+      "10": 82,
+      "11": 8,
+      "12": 53,
+      "13": 46,
+      "14": 36,
+      "15": 47,
+      "16": 296,
+      "17": 91,
+      "18": 228,
+      "2": 115,
+      "3": 110,
+      "4": 100,
+      "5": 230,
+      "6": 136,
+      "7": 101,
+      "8": 118
+    },
+    "candidate_host_count": 920,
+    "confirmed_host_count": 414,
+    "cross_class_conflict_host_count": 1,
+    "default_solution_candidate_host_count": 920,
+    "default_solution_confirmed_host_count": 414,
+    "default_solution_false_positive_or_refuted_host_count": 250,
+    "exact_duplicate_group_member_count": 2,
+    "exact_duplicate_source_row_count": 1,
+    "false_positive_or_refuted_host_count": 250,
+    "malformed_epic_identifier_row_count": 0,
+    "missing_disposition_reference_row_count": 0,
+    "missing_epic_identifier_row_count": 2,
+    "physical_loss_eligible_object_row_count": 1802,
+    "raw_disposition_row_counts": {
+      "CANDIDATE": 1374,
+      "CONFIRMED": 2375,
+      "FALSE POSITIVE": 293,
+      "REFUTED": 22
+    },
+    "source_row_count": 4064,
+    "unique_epic_host_count": 1559,
+    "unknown_disposition_row_count": 0
+  },
+  "failures": [],
+  "non_actions": [
+    "no_model_training",
+    "no_split_freeze",
+    "no_cnn_load_or_change",
+    "no_candidate_search",
+    "no_gatevetter_features",
+    "no_label_modification",
+    "no_expanded_label_table_build"
+  ],
+  "offline": true,
+  "output_artifacts": {
+    "data/phase2/catalogues/phase2_k2_catalogue_rows.parquet": {
+      "rows": 4064,
+      "sha256": "4c1e0ca7e90b7775ebbbdffc072618719d8c3f5874b9d10e5479151bd1847af5"
+    },
+    "docs/phase2/PHASE2_K2PANDC_INGESTION_SUMMARY.md": {
+      "sha256": "dde5d3cdbe7cd4efead740eb13e0faf7156a63257552b970d90c3770eb5e93a1"
+    },
+    "docs/phase2/phase2_k2pandc_epic_mapping_audit.csv": {
+      "rows": 9,
+      "sha256": "27d060aa8d617a9305f0d1768af35336a3c631142b037d6b8ebe8faf30874a4a"
+    }
+  },
+  "schema_columns_verified": [
+    "pl_name",
+    "k2_name",
+    "epic_hostname",
+    "default_flag",
+    "disposition",
+    "disp_refname",
+    "k2_campaigns",
+    "pl_orbper",
+    "rowupdate",
+    "releasedate"
+  ],
+  "schema_drift": [],
+  "selected_manifest": "data/phase2/catalogues/nea_k2pandc/2026-08-05/source_manifest.json",
+  "selected_snapshot": "data/phase2/catalogues/nea_k2pandc/2026-08-05/raw/k2pandc.csv",
+  "source_byte_size_verified": true,
+  "source_inventory": "docs/phase2/phase2_catalogue_source_inventory.csv",
+  "source_manifest_sha256": "eafd1afadc6435e42775e47b497ee1eb004386473b11ebdf0a9f7b835b851aed",
+  "source_row_count_verified": true,
+  "source_sha256_verified": true
+}

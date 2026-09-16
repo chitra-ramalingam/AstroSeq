@@ -1,0 +1,47 @@
+Official K2 Flux-Model Policy Note
+===================================
+
+Active Model
+------------
+The active existing K2 flux model is:
+
+models/k2_nocrop_flux_seed46_split303.best.keras
+
+This model is frozen for the current Stage G work. Do not train or fine-tune a
+new Keras model from the Stage F closed-45 freeze at this time.
+
+Score Semantics
+---------------
+The model produces flux_p_science_like. Fresh scores from the active model
+match the existing stored flux_p_science_like values exactly, so the stored
+score is the canonical flux-model score for downstream ranking and triage.
+
+Operational Policy
+------------------
+Use flux_p_science_like as a broad recall / triage signal, not as an
+auto-promotion classifier.
+
+- Around 0.60 is the useful "send to deeper vetting" threshold.
+- Scores at 0.70 and above are interesting, but still require Stage D/F checks.
+- Do not auto-promote from flux score alone.
+- Promotion and rejection decisions must use Stage D/F metrics, false-positive
+  diagnostics, visual/manual review, and external vetting evidence where
+  available.
+
+Current Freeze State
+--------------------
+Frozen Stage F labels:
+
+freezes/training_labels_v3_stage_f_closed_45.csv
+
+Current frozen training-label count: 45 rows.
+
+Stage F queue status:
+
+next_needs_stage_f_validation.csv = 0 rows.
+
+Stage G Implication
+-------------------
+Stage G ranking may build calibrated tabular layers on top of frozen
+flux_p_science_like plus Stage D/F features. That calibration layer must not
+modify, retrain, or fine-tune the Keras flux model.

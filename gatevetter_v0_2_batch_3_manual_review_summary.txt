@@ -1,0 +1,49 @@
+GateVetter v0.2 Batch 3 consolidated manual review
+review_batch: gatevetter_v0_2_batch_3_manual_review
+reviewed_at: 2026-06-22
+reviewer: user_provided_manual_review
+
+Batch 3 review status:
+- Stage G queue rows: 0
+- Stage G queue was empty.
+- 9/9 top holds reviewed.
+- Reject sanity reviewed; no missed candidate risk found.
+- Rest of reject sanity/rejects accepted as correct rejects.
+- GateVetter v0.2 unchanged.
+- CNN not retrained.
+- CNN remains morphology_score only.
+
+Manual label counts:
+- candidate_like: 0
+- uncertain_hold_positive: 0
+- uncertain_hold_period_ambiguous: 1
+- variable_or_possible_eb / false_positive_eb_or_variable: 3
+- low_priority_negative: 3
+- reject_as_noise_or_artifact: 4
+
+manual_label counts raw: {'uncertain_hold_period_ambiguous': 1, 'reject_as_noise_or_artifact': 4, 'low_priority_negative': 3, 'variable_or_possible_eb': 1, 'false_positive_eb_or_variable': 2}
+manual_label_family counts: {'hold': 1, 'negative': 10}
+
+Training notes:
+- Do not use holds for training yet.
+- Clear negatives and EB/variable false positives marked possible_future_training_example.
+- CNN remains morphology_score only.
+
+Files updated/created:
+- gatevetter_v0_2_batch_3_manual_review_decisions.csv
+- gatevetter_v0_2_batch_3_manual_review_summary.txt
+- cnn_manual_review_error_ledger.csv
+- plots/k2_batch/final_candidate_master_ledger.csv appended rows: 11; refreshed review-batch rows: 0
+
+Explicit manual labels:
+- EPIC_211912465: uncertain_hold_period_ambiguous (top_20_holds, rank=1)
+- EPIC_211384981: reject_as_noise_or_artifact (top_20_holds, rank=5)
+- EPIC_211490678: low_priority_negative (top_20_holds, rank=3)
+- EPIC_211504156: variable_or_possible_eb (top_20_holds, rank=4)
+- EPIC_211613728: reject_as_noise_or_artifact (top_20_holds, rank=6)
+- EPIC_211705654: reject_as_noise_or_artifact (top_20_holds, rank=9)
+- EPIC_211322563: reject_as_noise_or_artifact (top_20_holds, rank=2)
+- EPIC_211914980: low_priority_negative (top_20_holds, rank=7)
+- EPIC_212029715: low_priority_negative (top_20_holds, rank=8)
+- EPIC_211959779: false_positive_eb_or_variable (reject_sanity_high_cnn_high_snr, rank=4)
+- EPIC_212011476: false_positive_eb_or_variable (reject_sanity_high_cnn_high_snr, rank=1)

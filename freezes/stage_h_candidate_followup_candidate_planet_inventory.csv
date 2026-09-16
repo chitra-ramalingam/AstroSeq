@@ -1,0 +1,6 @@
+﻿"epic_id","training_label_v3","science_binary_v3","final_candidate_status","best_period_days","stage_h_status","stage_h_reason"
+"EPIC_211534076","candidate_like","science_like","recovered_known_unconfirmed_candidate","15.221580048255191","",""
+"EPIC_211889692","planet_like","science_like","recovered_known_confirmed_planet","17.673423499920546","",""
+"EPIC_211954033","candidate_like","science_like","promote_candidate_alias_check","11.441882991133753","",""
+"EPIC_212001099","planet_like","science_like","promote_primary_candidate","16.325087564604473","",""
+"EPIC_211759361","candidate_like","science_like","candidate_with_caveat","14.608622348492643","candidate_with_caveat","reasonable-depth primary; good odd/even agreement; no phase-0.5 secondary; flux score above vetting threshold; decent event support; caveat moderate SNR, high-ish OOT variability, and 2P/3 alias support"

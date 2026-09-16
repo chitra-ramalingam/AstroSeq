@@ -1,0 +1,190 @@
+﻿{
+    "run_name":  "k2_stage_r_to_g_pipeline",
+    "generated_at_local":  "2026-04-29 21:18:48 +01:00",
+    "git":  {
+                "commit_hash":  "1c33af8c706026eb31670f92340a6b7448060c51",
+                "worktree_dirty":  true,
+                "status_short":  [
+                                     " M .gitignore",
+                                     " M main.py",
+                                     "?? c5_star_candidates_top500.csv",
+                                     "?? candidates_c5_best_per_star.csv",
+                                     "?? candidates_c5_best_per_star_vetted.csv",
+                                     "?? candidates_c5_star_ranking.csv",
+                                     "?? candidates_c5_star_ranking_vetted.csv",
+                                     "?? candidates_c5_star_ranking_vetted_deep.csv",
+                                     "?? candidates_c5_star_ranking_vetted_insane.csv",
+                                     "?? candidates_c5_top3_windows_per_star.csv",
+                                     "?? candidates_top50.csv",
+                                     "?? k2_scan_w512_s128_v3.best.keras",
+                                     "?? k2_scan_w512_s128_v3.keras",
+                                     "?? k2_stage_d_holds.csv",
+                                     "?? k2_stage_d_input_tier_a.csv",
+                                     "?? k2_stage_d_pass_ranked.csv",
+                                     "?? k2_stage_d_passes.csv",
+                                     "?? k2_stage_d_tier_a_results.csv",
+                                     "?? k2_stage_d_top10_inspection_index.csv",
+                                     "?? k2_stage_e_followup_targets.csv",
+                                     "?? k2_stage_e_reject_or_binary_notes.csv",
+                                     "?? k2_stage_e_visual_review_sheet.csv",
+                                     "?? k2_stage_e_visual_review_sheet_updated.csv",
+                                     "?? k2_stage_f_final_ranked_candidates.csv",
+                                     "?? k2_stage_f_followup_validation.csv",
+                                     "?? k2_stage_f_hold_candidates.csv",
+                                     "?? k2_stage_f_planet_like_candidates.csv",
+                                     "?? k2_stage_g_candidate_dossiers.csv",
+                                     "?? k2_stage_i_whiteness_implementation_audit.md",
+                                     "?? k2_stage_j_whiteness_patch_plan.md",
+                                     "?? k2_stage_k_whiteness_patch_implementation_summary.md",
+                                     "?? k2_stage_m_whiteness_policy_options.csv",
+                                     "?? k2_stage_m_whiteness_policy_options_summary.md",
+                                     "?? k2_stage_n_whiteness_redesign_options.csv",
+                                     "?? k2_stage_n_whiteness_redesign_summary.md",
+                                     "?? k2_stage_o_composite_stability_policy_fields.csv",
+                                     "?? k2_stage_o_composite_stability_policy_spec.md",
+                                     "?? k2_stage_p_stage_o_paired_validation_summary.md",
+                                     "?? k2_stage_q2_top12_review_slice.csv",
+                                     "?? k2_stage_q2_top12_review_summary.md",
+                                     "?? k2_stage_q_review_high_validation_plan.md",
+                                     "?? k2_stage_q_review_high_validation_slice.csv",
+                                     "?? k2_stage_r2_auto_labels.csv",
+                                     "?? k2_stage_r2_auto_labels_v2.csv",
+                                     "?? k2_stage_r2_manual_auto_comparison.csv",
+                                     "?? k2_stage_r2_manual_auto_comparison_v2.csv",
+                                     "?? k2_stage_r2_manual_review_sheet.csv",
+                                     "?? k2_stage_r2_manual_review_summary.md",
+                                     "?? k2_stage_r_full_auto_labels_v2.csv",
+                                     "?? k2_stage_r_manual_review_sheet.csv",
+                                     "?? k2_stage_r_manual_review_summary.md",
+                                     "?? k2_stage_r_promote_audit.csv",
+                                     "?? k2_stage_r_promote_tiers.csv",
+                                     "?? k2_stage_r_review_chart_summary.md",
+                                     "?? k2_stage_s_manual_review_outcomes.csv",
+                                     "?? k2_stage_s_manual_review_summary.md",
+                                     "?? k2_stage_s_review_assist_notes.csv",
+                                     "?? k2_stage_s_review_assist_summary.md",
+                                     "?? src/Classifiers/K2/Batch/K2StageDTop10InspectionPackage.py",
+                                     "?? src/Classifiers/K2/Batch/K2StageFFollowupValidation.py"
+                                 ]
+            },
+    "policy_versions":  {
+                            "stage_r":  "Stage R v2 frozen promote tiering from k2_stage_r_promote_tiers.csv",
+                            "stage_d":  "Stage D deeper eval: Tier_A only, cached events/light curves, min_cluster_count=2, no downloads, period consistency + event-family metrics",
+                            "stage_e":  "Stage E OC visual review labels from k2_stage_e_visual_review_sheet_updated.csv",
+                            "stage_f":  "Stage F follow-up validation: phase-0.5 secondary search, alias checks P/2 2P/3 P 3P/2 2P, event-family depth/radius estimate, odd/even explicit check, OOT variability check",
+                            "stage_g":  "Stage G dossiers for final planet-like candidates with manual final recommendation mapping"
+                        },
+    "files":  {
+                  "inputs":  [
+                                 "k2_stage_r_promote_tiers.csv",
+                                 "k2_stage_d_input_tier_a.csv",
+                                 "k2_stage_d_tier_a_results.csv",
+                                 "k2_stage_e_visual_review_sheet_updated.csv",
+                                 "k2_stage_e_followup_targets.csv",
+                                 "k2_stage_f_followup_validation.csv",
+                                 "k2_stage_f_final_ranked_candidates.csv"
+                             ],
+                  "outputs":  [
+                                  "k2_stage_d_passes.csv",
+                                  "k2_stage_d_holds.csv",
+                                  "k2_stage_d_pass_ranked.csv",
+                                  "k2_stage_d_top10_inspection_index.csv",
+                                  "k2_stage_e_reject_or_binary_notes.csv",
+                                  "k2_stage_f_planet_like_candidates.csv",
+                                  "k2_stage_f_hold_candidates.csv",
+                                  "k2_stage_f_final_ranked_candidates.csv",
+                                  "k2_stage_g_candidate_dossiers.csv",
+                                  "plots/k2_batch/stage_d_top10/",
+                                  "plots/k2_batch/stage_f_followup/",
+                                  "plots/k2_batch/stage_g_dossiers/"
+                              ]
+              },
+    "row_counts":  {
+                       "k2_stage_r_promote_tiers":  67,
+                       "k2_stage_d_input_tier_a":  52,
+                       "k2_stage_d_tier_a_results":  52,
+                       "k2_stage_e_visual_review_sheet_updated":  10,
+                       "k2_stage_e_followup_targets":  3,
+                       "k2_stage_e_reject_or_binary_notes":  5,
+                       "k2_stage_f_followup_validation":  3,
+                       "k2_stage_f_planet_like_candidates":  2,
+                       "k2_stage_f_hold_candidates":  1,
+                       "k2_stage_f_final_ranked_candidates":  3,
+                       "k2_stage_g_candidate_dossiers":  2
+                   },
+    "counts":  {
+                   "stage_r_tiers":  {
+                                         "Tier_A":  52,
+                                         "Tier_B":  15,
+                                         "Tier_C":  0
+                                     },
+                   "stage_d_labels":  {
+                                          "hold_deeper_eval":  16,
+                                          "pass_deeper_eval":  36,
+                                          "fail_deeper_eval":  0
+                                      },
+                   "stage_e_visual_labels":  {
+                                                 "visual_likely_eclipsing_binary":  1,
+                                                 "visual_needs_review":  2,
+                                                 "visual_planet_like_candidate":  2,
+                                                 "visual_possible_binary":  2,
+                                                 "visual_possible_binary_or_noise":  1,
+                                                 "visual_possible_candidate":  1,
+                                                 "visual_reject_noise_or_binary":  1
+                                             },
+                   "stage_f_labels":  {
+                                          "stage_f_hold":  1,
+                                          "stage_f_planet_like":  2
+                                      },
+                   "final_candidate_counts":  {
+                                                  "final_ranked_total":  3,
+                                                  "planet_like":  2,
+                                                  "hold":  1,
+                                                  "stage_g_dossiers":  2,
+                                                  "reject_or_binary_notes":  5
+                                              }
+               },
+    "final_ranked_candidates":  [
+                                    {
+                                        "epic_id":  "EPIC_211534076",
+                                        "final_rank":  1,
+                                        "stage_f_label":  "stage_f_planet_like",
+                                        "final_recommendation":  "top_followup_candidate",
+                                        "best_period_days":  15.221580048255191,
+                                        "primary_depth":  0.0010519935860486,
+                                        "radius_ratio_sqrt_depth":  0.0324344506050064,
+                                        "alias_risk":  "low",
+                                        "secondary_to_primary_depth_ratio":  0,
+                                        "oot_variability_to_depth":  0.32249088483269617
+                                    },
+                                    {
+                                        "epic_id":  "EPIC_211889692",
+                                        "final_rank":  2,
+                                        "stage_f_label":  "stage_f_planet_like",
+                                        "final_recommendation":  "followup_candidate_with_variability_caution",
+                                        "best_period_days":  17.673423499920546,
+                                        "primary_depth":  0.0009543328081398,
+                                        "radius_ratio_sqrt_depth":  0.030892277483859941,
+                                        "alias_risk":  "low",
+                                        "secondary_to_primary_depth_ratio":  0,
+                                        "oot_variability_to_depth":  2.2516310215513196
+                                    },
+                                    {
+                                        "epic_id":  "EPIC_211555255",
+                                        "final_rank":  3,
+                                        "stage_f_label":  "stage_f_hold",
+                                        "final_recommendation":  "secondary_queue_hold",
+                                        "best_period_days":  9.9297815309109865,
+                                        "primary_depth":  0.0006096581632937,
+                                        "radius_ratio_sqrt_depth":  0.024691256818835692,
+                                        "alias_risk":  "low",
+                                        "secondary_to_primary_depth_ratio":  0.15741745098345855,
+                                        "oot_variability_to_depth":  1.8896751893774928
+                                    }
+                                ],
+    "final_recommendations":  {
+                                  "EPIC_211534076":  "top_followup_candidate",
+                                  "EPIC_211889692":  "followup_candidate_with_variability_caution",
+                                  "EPIC_211555255":  "secondary_queue_hold"
+                              }
+}

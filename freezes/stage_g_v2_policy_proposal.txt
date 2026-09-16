@@ -1,0 +1,57 @@
+Stage G v2 Tiered Support Policy Proposal
+=========================================
+
+Scope
+-----
+Stage G v2 is a support and prioritization review layer only. It does not retrain, fine-tune, or replace the frozen flux model, and it must not update final_candidate_master_ledger.csv.
+
+Manual-label guardrail
+----------------------
+Stage G v2 must not override manual labels, Stage D/F vetting, visual review, or final candidate ledger decisions. Scores are used only to route review attention.
+
+Tier definitions
+----------------
+- strong_support: calibrated_score >= 0.70
+- review_support: 0.45 <= calibrated_score < 0.70
+- weak_support: calibrated_score < 0.45
+
+Required actions
+----------------
+- candidate_like / planet_like rows below 0.70: candidate_retained_stage_g_review_needed
+- uncertain_hold / not_science_like rows above 0.70: high_score_false_positive_or_recheck_required
+- EPIC_211842439: high-score false positive / do-not-promote
+- EPIC_211954033, EPIC_211889692, EPIC_211908778, EPIC_211404127, and EPIC_211759361: feature review for Stage G suppression
+
+Counts by support tier
+----------------------
+- strong_support: 3
+- review_support: 18
+- weak_support: 31
+
+candidate_like / planet_like by tier
+----------------------------------
+- strong_support: 2
+- review_support: 2
+- weak_support: 3
+
+uncertain_hold / not_science_like by tier
+---------------------------------------
+- strong_support: 1
+- review_support: 16
+- weak_support: 21
+
+Strong-support false-positive risks
+-----------------------------------
+- EPIC_211842439: score=0.82419685098; label=uncertain_hold; binary=not_science_like; action=high-score_false_positive_do-not-promote
+
+Science-like rows below strong_support
+--------------------------------------
+- EPIC_211954033: score=0.55928650183; tier=review_support; label=candidate_like; action=feature_review_for_stage_g_suppression
+- EPIC_211889692: score=0.516237480665; tier=review_support; label=planet_like; action=feature_review_for_stage_g_suppression
+- EPIC_211908778: score=0.4320067276; tier=weak_support; label=candidate_like; action=feature_review_for_stage_g_suppression
+- EPIC_211404127: score=0.401965238504; tier=weak_support; label=candidate_like; action=feature_review_for_stage_g_suppression
+- EPIC_211759361: score=0.370758292198; tier=weak_support; label=candidate_like; action=feature_review_for_stage_g_suppression
+
+Output artifact
+---------------
+- freezes/stage_g_v2_support_tier_review.csv

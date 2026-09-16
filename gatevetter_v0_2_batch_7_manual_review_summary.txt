@@ -1,0 +1,44 @@
+GateVetter v0.2 gatevetter_v0_2_batch_7 manual review
+review_batch: gatevetter_v0_2_batch_7_manual_review
+reviewed_at: 2026-06-22
+reviewer: codex_visual_review
+
+Workflow:
+- Stage G queue rows: 0
+- Stage G queue was empty.
+- 8/8 top holds reviewed.
+- 10/10 reject sanity rows reviewed.
+- No missed candidate-like positives found in reject sanity sample.
+- GateVetter v0.2 unchanged.
+- CNN not retrained.
+- Manual labels were not used during prediction.
+
+manual_label counts: {'uncertain_hold_positive': 1, 'variable_or_possible_eb': 8, 'reject_as_noise_or_artifact': 8, 'false_positive_eb_or_variable': 1}
+manual_label_family counts: {'hold': 1, 'negative': 17}
+
+Files updated/created:
+- gatevetter_v0_2_batch_7_manual_review_decisions.csv
+- gatevetter_v0_2_batch_7_manual_review_summary.txt
+- cnn_manual_review_error_ledger.csv
+- plots/k2_batch/final_candidate_master_ledger.csv appended rows: 18; refreshed review-batch rows: 0
+- gatevetter_v0_2_rolling_batch_summary.csv
+
+Manual labels:
+- EPIC_211959909: uncertain_hold_positive (top_20_holds, rank=1)
+- EPIC_211769243: variable_or_possible_eb (top_20_holds, rank=2)
+- EPIC_200008977: reject_as_noise_or_artifact (top_20_holds, rank=3)
+- EPIC_211980815: variable_or_possible_eb (top_20_holds, rank=4)
+- EPIC_211485234: variable_or_possible_eb (top_20_holds, rank=5)
+- EPIC_211811904: variable_or_possible_eb (top_20_holds, rank=6)
+- EPIC_211421801: variable_or_possible_eb (top_20_holds, rank=7)
+- EPIC_211799289: variable_or_possible_eb (top_20_holds, rank=8)
+- EPIC_211804680: reject_as_noise_or_artifact (reject_sanity_high_cnn_high_snr, rank=1)
+- EPIC_211584718: reject_as_noise_or_artifact (reject_sanity_high_cnn_high_snr, rank=2)
+- EPIC_212019055: false_positive_eb_or_variable (reject_sanity_high_cnn_high_snr, rank=3)
+- EPIC_211790174: reject_as_noise_or_artifact (reject_sanity_high_cnn_high_snr, rank=4)
+- EPIC_211790348: reject_as_noise_or_artifact (reject_sanity_high_cnn_high_snr, rank=5)
+- EPIC_211990732: reject_as_noise_or_artifact (reject_sanity_high_cnn_high_snr, rank=6)
+- EPIC_211957146: variable_or_possible_eb (reject_sanity_high_cnn_high_snr, rank=7)
+- EPIC_211486822: variable_or_possible_eb (reject_sanity_high_cnn_high_snr, rank=8)
+- EPIC_211899798: reject_as_noise_or_artifact (reject_sanity_high_cnn_high_snr, rank=9)
+- EPIC_211378170: reject_as_noise_or_artifact (reject_sanity_high_cnn_high_snr, rank=10)

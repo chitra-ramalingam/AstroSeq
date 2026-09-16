@@ -1,0 +1,32 @@
+GateVetter v0.2 batch-next manual reject-sanity review summary
+review_batch: gatevetter_v0_2_batch_next_manual_reject_sanity_review
+reviewed_at: 2026-06-22
+reviewer: user_provided_manual_review
+
+Reject sanity packet data rows: 10
+Manual reject decisions supplied and logged: 10
+Input note: 10 reject-sanity packet objects are now ledgered as correct rejects.
+Action: no CNN retraining performed; GateVetter v0.2 thresholds unchanged.
+
+manual_label counts: {'false_positive_eb_or_variable': 3, 'noise_or_variable': 1, 'reject_as_noise_or_artifact': 6}
+manual_reject_class counts: {'EB/variable': 3, 'noise/variable': 1, 'noise/artifact': 6}
+gatevetter_v0_2_reason counts: {'eb_or_variable_gate': 5, 'weak_or_incomplete_signal_after_gates': 5}
+high/moderate-high CNN morphology negatives logged: ['EPIC_211972837', 'EPIC_211938794', 'EPIC_211548229', 'EPIC_211973836', 'EPIC_212012387', 'EPIC_212013215', 'EPIC_211812160', 'EPIC_211954593', 'EPIC_211933828']
+
+Files updated/created:
+- gatevetter_v0_2_batch_next_manual_reject_review_decisions.csv
+- gatevetter_v0_2_batch_next_manual_reject_review_summary.txt
+- cnn_manual_review_error_ledger.csv
+- plots/k2_batch/final_candidate_master_ledger.csv appended rows: 10; refreshed review-batch rows: 0
+
+Reviewed rejects:
+- EPIC_211972837: packet_rank=3; gate=eb_or_variable_gate; manual_label=false_positive_eb_or_variable; manual_reject_class=EB/variable
+- EPIC_211703338: packet_rank=5; gate=eb_or_variable_gate; manual_label=false_positive_eb_or_variable; manual_reject_class=EB/variable
+- EPIC_211938794: packet_rank=1; gate=eb_or_variable_gate; manual_label=false_positive_eb_or_variable; manual_reject_class=EB/variable
+- EPIC_211548229: packet_rank=2; gate=eb_or_variable_gate; manual_label=noise_or_variable; manual_reject_class=noise/variable
+- EPIC_211973836: packet_rank=4; gate=eb_or_variable_gate; manual_label=reject_as_noise_or_artifact; manual_reject_class=noise/artifact
+- EPIC_212012387: packet_rank=6; gate=weak_or_incomplete_signal_after_gates; manual_label=reject_as_noise_or_artifact; manual_reject_class=noise/artifact
+- EPIC_212013215: packet_rank=7; gate=weak_or_incomplete_signal_after_gates; manual_label=reject_as_noise_or_artifact; manual_reject_class=noise/artifact
+- EPIC_211812160: packet_rank=8; gate=weak_or_incomplete_signal_after_gates; manual_label=reject_as_noise_or_artifact; manual_reject_class=noise/artifact
+- EPIC_211954593: packet_rank=9; gate=weak_or_incomplete_signal_after_gates; manual_label=reject_as_noise_or_artifact; manual_reject_class=noise/artifact
+- EPIC_211933828: packet_rank=10; gate=weak_or_incomplete_signal_after_gates; manual_label=reject_as_noise_or_artifact; manual_reject_class=noise/artifact

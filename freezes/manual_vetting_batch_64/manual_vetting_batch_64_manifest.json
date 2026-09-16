@@ -1,0 +1,25 @@
+{
+  "freeze_batch_id": "manual_vetting_batch_64",
+  "run_id": "20260601_epic65",
+  "generated_at": "2026-06-01T18:31:25",
+  "manual_epic_count": 64,
+  "did_not_retrain_cnn": true,
+  "canonical_updates": {
+    "final_candidate_master_ledger": "C:\\Projects\\AstroSeq\\AstroSeq\\plots\\k2_batch\\final_candidate_master_ledger.csv",
+    "manual_decisions_ledger": "C:\\Projects\\AstroSeq\\AstroSeq\\plots\\k2_batch\\master_vetted_catalog\\manual_vetting_decisions_ledger.csv",
+    "reconciled_current_ledger": "C:\\Projects\\AstroSeq\\AstroSeq\\plots\\k2_batch\\master_vetted_catalog\\final_candidate_master_ledger_reconciled_current.csv"
+  },
+  "outputs": [
+    "C:\\Projects\\AstroSeq\\AstroSeq\\manual_64_training_view.csv",
+    "C:\\Projects\\AstroSeq\\AstroSeq\\manual_vetting_64_summary.txt",
+    "C:\\Projects\\AstroSeq\\AstroSeq\\manual_vetting_64_stage_g_deeper_eval_queue.csv",
+    "C:\\Projects\\AstroSeq\\AstroSeq\\manual_vetting_64_model_disagreement_report.csv",
+    "C:\\Projects\\AstroSeq\\AstroSeq\\manual_vetting_64_model_disagreement_report.txt",
+    "C:\\Projects\\AstroSeq\\AstroSeq\\autovet_v2_manual_64_scores.csv",
+    "C:\\Projects\\AstroSeq\\AstroSeq\\autovet_v2_manual_64_evaluation.txt",
+    "C:\\Projects\\AstroSeq\\AstroSeq\\plots\\k2_batch\\final_candidate_master_ledger.csv",
+    "C:\\Projects\\AstroSeq\\AstroSeq\\plots\\k2_batch\\master_vetted_catalog\\manual_vetting_decisions_ledger.csv",
+    "C:\\Projects\\AstroSeq\\AstroSeq\\plots\\k2_batch\\master_vetted_catalog\\final_candidate_master_ledger_reconciled_current.csv",
+    "C:\\Projects\\AstroSeq\\AstroSeq\\freezes\\manual_vetting_batch_64\\manual_vetting_batch_64_manifest.json"
+  ]
+}

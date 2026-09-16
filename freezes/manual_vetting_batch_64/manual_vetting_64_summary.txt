@@ -1,0 +1,68 @@
+Manual vetting batch 64 summary
+generated_at=2026-06-01T19:11:24
+freeze_batch_id=manual_vetting_batch_64
+source=manual_64_training_view.csv
+row_count=64
+unique_epics=64
+
+Verified label-family counts
+- negative: 44
+- hold: 16
+- positive: 4
+
+Manual label counts
+- binary_system: 8
+- candidate_like: 4
+- low_priority_negative: 4
+- noise_or_artifact: 14
+- reject_as_noise_or_artifact: 16
+- uncertain_hold: 15
+- uncertain_hold_positive: 1
+- variable_or_possible_eb: 2
+
+Training use counts
+- true: 48
+- false: 16
+
+Training class counts
+- candidate_like_positive: 4
+- excluded_uncertain_hold: 15
+- excluded_uncertain_hold_positive: 1
+- false_positive_eb_or_variable: 10
+- negative_low_priority: 4
+- negative_noise_or_artifact: 14
+- negative_reject_as_noise_or_artifact: 16
+
+Stage G deeper evaluation EPICs
+- EPIC_211357782
+- EPIC_211497712
+- EPIC_211915147
+- EPIC_211953866
+
+Policy confirmations
+- uncertain_hold and uncertain_hold_positive are excluded from training.
+- binary_system and variable_or_possible_eb remain false_positive_eb_or_variable negatives.
+- reject_as_noise_or_artifact, noise_or_artifact, and low_priority_negative remain separate negative classes.
+- CNN was not retrained.
+- AutoVet v2 is a deterministic tabular/rules layer over frozen CNN score plus validation metrics.
+
+AutoVet v2 label counts
+- autovet_v2_false_positive_eb_or_variable: 6
+- autovet_v2_reject_noise_or_artifact: 11
+- autovet_v2_review_signal_with_caveats: 47
+
+Model disagreement counts
+- eb_variable_false_positive: 10
+- fallback_period_dominated_reject: 17
+- good_odd_even_manual_reject: 13
+- high_cnn_score_manual_reject: 15
+- high_snr_manual_reject: 24
+- low_cnn_score_manual_candidate_or_hold: 4
+
+Outputs
+- manual_vetting_64_summary.txt
+- manual_64_label_counts.csv
+- manual_64_model_disagreement_report.txt
+- stage_g_deeper_eval_queue_manual_64.csv
+- autovet_v2_manual_64_scores.csv
+- autovet_v2_manual_64_evaluation.txt

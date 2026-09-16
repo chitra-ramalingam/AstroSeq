@@ -1,0 +1,63 @@
+{
+  "snapshot_manifest_version": "1.0.0",
+  "source_name": "NASA Exoplanet Archive K2 Planets and Candidates",
+  "source_table": "k2pandc",
+  "source_slug": "nea_k2pandc",
+  "source_version": "retrieved_2026-08-05",
+  "exact_tap_query": "select pl_name,k2_name,epic_hostname,default_flag,disposition,disp_refname,k2_campaigns,pl_orbper,rowupdate,releasedate from k2pandc order by epic_hostname,pl_name,default_flag desc",
+  "retrieval_url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+pl_name,k2_name,epic_hostname,default_flag,disposition,disp_refname,k2_campaigns,pl_orbper,rowupdate,releasedate+from+k2pandc+order+by+epic_hostname,pl_name,default_flag+desc&format=csv",
+  "retrieval_utc_timestamp": "2026-08-05T17:08:18.2375669Z",
+  "retrieval_timestamp_basis": "raw file completion mtime UTC after the authorized Invoke-WebRequest completed",
+  "http_metadata": {
+    "metadata_probe_utc": "2026-08-05T17:27:03Z",
+    "status": 200,
+    "server": "Apache/2.4.6 (CentOS) Phusion_Passenger/6.0.4 OpenSSL/1.0.2k-fips PHP/5.4.16 mod_wsgi/4.9.4 Python/3.11",
+    "content_type": "text/plain; charset=UTF-8",
+    "etag": null,
+    "last_modified": null
+  },
+  "raw_file": {
+    "filename": "k2pandc.csv",
+    "relative_path": "raw/k2pandc.csv",
+    "byte_size": 488651,
+    "sha256": "609b8c3eedbc02d8e43783be183ecea62e2074042c872ab10cbdd406d7b2676d",
+    "row_count": 4064,
+    "columns": [
+      "pl_name",
+      "k2_name",
+      "epic_hostname",
+      "default_flag",
+      "disposition",
+      "disp_refname",
+      "k2_campaigns",
+      "pl_orbper",
+      "rowupdate",
+      "releasedate"
+    ]
+  },
+  "schema_verification": {
+    "verified_utc": "2026-08-05T17:26:59Z",
+    "schema_query": "select column_name,datatype from TAP_SCHEMA.columns where table_name='k2pandc'",
+    "required_columns": {
+      "pl_name": "char",
+      "k2_name": "char",
+      "epic_hostname": "char",
+      "default_flag": "int",
+      "disposition": "char",
+      "disp_refname": "char",
+      "k2_campaigns": "char",
+      "pl_orbper": "double",
+      "rowupdate": "char",
+      "releasedate": "char"
+    },
+    "missing_required_columns": [],
+    "schema_drift_detected": false
+  },
+  "source_citation": {
+    "name": "NASA Exoplanet Archive K2 Planets and Candidates Table",
+    "doi": "10.26133/NEA19",
+    "documentation_url": "https://exoplanetarchive.ipac.caltech.edu/docs/API_k2pandc_columns.html"
+  },
+  "ingestion_schema_version": "phase2_k2_catalogue_object_v1.0.0",
+  "git_commit": "cd11cbd94c6ead5b28545b1bbfda6b89ed228938"
+}

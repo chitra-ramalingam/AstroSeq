@@ -629,6 +629,26 @@ def plot_summary(
         f"decision_authority: {row['decision_authority']}",
         f"event_family_count: {len(family)}",
     ]
+    refreshed_fields = [
+        ("period_ambiguity_flag", row.get("period_ambiguity_flag")),
+        ("primary_depth", row.get("primary_depth")),
+        ("primary_depth_snr", row.get("primary_depth_snr")),
+        ("duration_hours", row.get("transit_duration_hours")),
+        ("odd_even_ratio", row.get("odd_even_depth_ratio")),
+        ("secondary_depth_snr", row.get("secondary_depth_snr")),
+        ("secondary_primary_ratio", row.get("secondary_to_primary_depth_ratio")),
+        ("oot_to_depth", row.get("oot_to_depth")),
+        ("alias_risk", row.get("alias_risk")),
+        ("candidate_period_count", row.get("candidate_period_count")),
+    ]
+    for label, value in refreshed_fields:
+        if isinstance(value, str):
+            shown = value or "NA"
+        elif isinstance(value, (bool, np.bool_)):
+            shown = str(bool(value))
+        else:
+            shown = fmt(value, 6)
+        meta_lines.append(f"{label}: {shown}")
     axes[8].text(0.02, 0.98, "\n".join(meta_lines), ha="left", va="top", transform=axes[8].transAxes)
     axes[8].set_axis_off()
     axes[8].set_title("Metadata")

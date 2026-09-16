@@ -1,0 +1,12 @@
+epic_id,internal_normalized_class,archive_normalized_class,archive_dispositions_json,archive_references_json,archive_cross_class_conflict,internal_archive_class_conflict,conflict_resolution
+EPIC_205703094,,,"[""CANDIDATE"",""FALSE POSITIVE""]","[""Crossfield et al. 2016""]",True,False,quarantined_excluded_from_physical_class_loss
+EPIC_211424769,false_positive_eb_or_variable,candidate_like,"[""CANDIDATE""]","[""Mayo et al. 2018""]",False,True,quarantined_excluded_from_physical_class_loss
+EPIC_211428897,reject_as_noise_or_artifact,candidate_like,"[""CANDIDATE""]","[""Kruse et al. 2019""]",False,True,quarantined_excluded_from_physical_class_loss
+EPIC_211432167,reject_as_noise_or_artifact,false_positive_eb_or_variable,"[""FALSE POSITIVE""]","[""Yu et al. 2018""]",False,True,quarantined_excluded_from_physical_class_loss
+EPIC_211432946,reject_as_noise_or_artifact,false_positive_eb_or_variable,"[""FALSE POSITIVE""]","[""Yu et al. 2018""]",False,True,quarantined_excluded_from_physical_class_loss
+EPIC_211705654,reject_as_noise_or_artifact,false_positive_eb_or_variable,"[""FALSE POSITIVE""]","[""Rizzuto et al. 2017""]",False,True,quarantined_excluded_from_physical_class_loss
+EPIC_211719484,false_positive_eb_or_variable,candidate_like,"[""CANDIDATE""]","[""Barros et al. 2016""]",False,True,quarantined_excluded_from_physical_class_loss
+EPIC_211812160,reject_as_noise_or_artifact,false_positive_eb_or_variable,"[""FALSE POSITIVE""]","[""Yu et al. 2018""]",False,True,quarantined_excluded_from_physical_class_loss
+EPIC_212012387,reject_as_noise_or_artifact,false_positive_eb_or_variable,"[""FALSE POSITIVE""]","[""Yu et al. 2018""]",False,True,quarantined_excluded_from_physical_class_loss
+EPIC_212020442,reject_as_noise_or_artifact,false_positive_eb_or_variable,"[""FALSE POSITIVE""]","[""Yu et al. 2018""]",False,True,quarantined_excluded_from_physical_class_loss
+EPIC_212066407,false_positive_eb_or_variable,candidate_like,"[""CANDIDATE""]","[""Kruse et al. 2019""]",False,True,quarantined_excluded_from_physical_class_loss

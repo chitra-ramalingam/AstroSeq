@@ -1,0 +1,30 @@
+EPIC_211839462 deeper period and variability review
+generated_at=2026-06-08T22:38:28
+light_curve=C:\Users\rcitr\.lightkurve\cache\mastDownload\HLSP\hlsp_everest_k2_llc_211839462-c05_kepler_v2.0_lc\hlsp_everest_k2_llc_211839462-c05_kepler_v2.0_lc.fits
+
+Period comparison
+- Half P=2.609685 d: family=12, depth=0.002753024, SNR=5.46, odd/even=nan, coherence=moderate (0.5829).
+- Saved P=5.219370 d: family=14, depth=0.002101162, SNR=6.366, odd/even=0.8857, coherence=strong (0.7628).
+- Double P=10.438740 d: family=8, depth=0.002002532, SNR=6.366, odd/even=0.9542, coherence=strong (0.8630).
+
+Local baseline stability
+- Half period: positive-depth epochs=0.300, median depth=-0.007944643, median SNR=-2.968, median sideband sigma=0.002564097, median |slope|/day=0.02596535, both-sideband fraction=0.000, left/right available=1.000/0.000.
+- Saved period: positive-depth epochs=0.857, median depth=0.0003729332, median SNR=5.586, median sideband sigma=7.632918e-05, median |slope|/day=0.003472924, both-sideband fraction=0.000, left/right available=0.000/1.000.
+- Double period: positive-depth epochs=1.000, median depth=0.0005750152, median SNR=7.991, median sideband sigma=7.372127e-05, median |slope|/day=0.003123205, both-sideband fraction=0.000, left/right available=0.000/1.000.
+
+Variability origin
+- classification=k2_or_everest_quality_gap_edge_artifact_favored
+- raw/corrected correlation=0.998450.
+- Raw and corrected strongest periods are 5.167934 d and 5.167934 d.
+- Corrected P/2 power=0.277365; saved-P power=0.276694; K2 0.245-d power=0.000201.
+- Removed correction amplitude / corrected amplitude=0.0841; removed/corrected P/2 power=0.0037.
+- Two neighboring folded troughs occur at phases -0.0669 and 0.4153, with depths 0.03363 and 0.03095; phase separation=0.4822.
+- All saved-period windows are one-sided after quality filtering: the pre-event sideband is absent while the post-event sideband is retained. The deep neighboring troughs and apparent 2.6/5.2-day periodicity therefore track recurring quality-gap edges and residual ramps. Raw/corrected agreement does not establish an astrophysical origin because the boundary artifact is present before EVEREST correction.
+- Neighboring event detections and sloped local baselines are quantified in the event-level CSV.
+- This review does not modify manual labels or trusted-period fields.
+
+period_metrics=EPIC_211839462_period_comparison_metrics.csv
+local_baselines=EPIC_211839462_local_baseline_metrics.csv
+variability_metrics=EPIC_211839462_variability_metrics.csv
+period_comparison_panel=EPIC_211839462_period_comparison_panel.png
+variability_diagnostic=EPIC_211839462_variability_diagnostic.png

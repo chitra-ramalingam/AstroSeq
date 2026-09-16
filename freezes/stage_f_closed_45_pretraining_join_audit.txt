@@ -1,0 +1,261 @@
+Pre-training data join audit
+freeze_name: stage_f_closed_45
+label_file: freezes/training_labels_v3_stage_f_closed_45.csv
+model_training_started: no
+
+Summary
+-------
+This audit uses the frozen Stage F closure label file only. No model training
+was started.
+
+1. Frozen label counts
+----------------------
+total labels: 45
+
+training_label_v3 counts:
+  binary_system: 2
+  candidate_like: 5
+  low_priority_negative: 5
+  noise_or_artifact: 19
+  planet_like: 2
+  uncertain_hold: 11
+  variable_or_artifact: 1
+
+science_binary_v3 counts:
+  science_like: 7
+  not_science_like: 31
+  unresolved: 7
+
+2. Feature table joins
+----------------------
+Current K2 scoring/classifier feature surfaces inspected:
+  k2_hybrid_candidate_score_v2.csv
+  k2_stage_f_hybrid_v2_validation.csv
+  k2_stage_d_tier_a_results.csv
+  k2_stage_d_pass_ranked.csv
+
+k2_hybrid_candidate_score_v2.csv:
+  rows: 52
+  unique EPICs: 52
+  labels successfully joined to features: 45
+  labels missing features: 0
+  missing EPIC list: none
+
+k2_stage_d_tier_a_results.csv:
+  rows: 52
+  unique EPICs: 52
+  labels successfully joined to features: 45
+  labels missing features: 0
+  missing EPIC list: none
+
+k2_stage_f_hybrid_v2_validation.csv:
+  rows: 9
+  unique EPICs: 9
+  labels successfully joined to this Stage F override table: 9
+  labels missing this Stage F override table: 36
+  note: this table is an older Stage F hybrid-v2 override source, not the full
+        frozen label feature table. Missing rows here are expected for labels
+        that came from other review waves or positive controls.
+
+k2_stage_d_pass_ranked.csv:
+  rows: 36
+  unique EPICs: 36
+  labels successfully joined to this ranked pass queue: 32
+  labels missing this ranked pass queue: 13
+  note: this is a ranked pass queue, not the complete feature table. Missing
+        rows here are expected for labels that did not remain in that active
+        pass queue.
+
+3. Feature columns available
+----------------------------
+Stage D tensor/classifier feature columns from scripts/train_labels_v2_tensor.py:
+  n_events_long_good
+  n_events_ge_10_cadences
+  max_shape_score
+  spike_fraction_2cadence
+  depth_ratio
+  n_events_raw
+  n_events_after_filters
+  best_period_days
+  period_support_count
+  event_family_count
+  folded_depth_consistency
+  duration_consistency
+  odd_even_depth_delta
+  cluster_center_phase
+  n_predicted
+  n_covered
+  coverage_rate
+  hit_rate_snr
+  hit_rate_shape
+  soft_hit_rate
+  cache_hits
+  cache_misses
+  downloads_done
+  validations_run
+
+Current hybrid/scoring feature columns available in k2_hybrid_candidate_score_v2.csv:
+  candidate_score
+  flux_p_science_like
+  flux_recall_filter_pass
+  stage_d_quality_score
+  stage_f_quality_score
+  stage_f_available
+  false_positive_penalty
+  best_period_days
+  period_support_count
+  event_family_count
+  folded_depth_consistency
+  duration_consistency
+  odd_even_depth_delta
+  primary_depth_snr
+  secondary_to_primary_depth_ratio
+  odd_even_depth_delta_explicit
+  oot_variability_to_depth
+  alias_best_support_ratio
+  stage_f_odd_even_penalty
+  stage_f_secondary_penalty
+  stage_f_oot_penalty
+  stage_f_alias_penalty
+  flux_num_segments
+  flux_p_top3_mean
+  flux_p_top10_mean
+  flux_best_segment_start
+  flux_best_segment_end
+  flux_best_segment_mid_time
+  n_events_long_good
+  n_events_ge_10_cadences
+  max_shape_score
+  spike_fraction_2cadence
+  depth_ratio
+  n_events_raw
+  n_events_after_filters
+  cluster_center_phase
+  n_predicted
+  n_covered
+  coverage_rate
+  hit_rate_snr
+  hit_rate_shape
+  soft_hit_rate
+  cache_hits
+  cache_misses
+  downloads_done
+  validations_run
+  secondary_depth_snr
+  stage_d_positive_score
+  stage_d_spike_clean
+  stage_d_odd_even_clean
+  stage_d_odd_even_penalty
+
+Important feature-use note:
+  For a clean pre-training model, prefer pre-label and pre-manual-review
+  numeric features. Treat Stage F labels/reasons and manual review metadata as
+  excluded leakage. Derived Stage F numeric vetting metrics may be useful for a
+  post-vetting scorer, but should be deliberately included only if the training
+  objective is a post-Stage-F calibration model.
+
+4. Target column mapping
+------------------------
+Binary target source column: science_binary_v3
+
+Mapping:
+  science_binary_v3 == science_like -> binary target 1 / positive
+  science_binary_v3 == not_science_like -> binary target 0 / negative
+  science_binary_v3 == unresolved -> excluded from binary training
+
+Label families:
+  science_like: planet_like, candidate_like
+  not_science_like: noise_or_artifact, binary_system, variable_or_artifact,
+                    low_priority_negative
+  unresolved: uncertain_hold / manual hold rows
+
+5. Unresolved / uncertain_hold treatment
+----------------------------------------
+unresolved / uncertain_hold rows should be excluded from binary training.
+They may be retained only for evaluation, calibration, ranking sanity checks,
+or hold-queue analysis. This matches the current v3 scoring logic, which
+excludes uncertain_hold rows from tuning metrics.
+
+6. Final binary training counts
+-------------------------------
+science_like positives: 7
+not_science_like negatives: 31
+excluded unresolved/hold rows: 7
+
+7. Leakage column audit
+-----------------------
+Columns that should not be used as model features:
+  training_label_v3
+  science_binary_v3
+  training_label_rule
+  training_label_v2
+  manual_stage_f_label
+  manual_science_binary
+  manual_reason
+  manual_review_label
+  manual_review_status
+  visual_notes
+  reviewer
+  reviewed_at
+  final_candidate_status
+  review_bin
+  known_confirmed / known_unconfirmed / known candidate flags, if present
+  recovered_known_* status fields
+  final candidate ledger flags
+  is_labeled_in_ledger
+  is_labeled_v3
+  actual_science_like_v3
+  strict_route
+  strict_policy_reason
+  strict_promoted
+  needs_stage_f_validation
+  hybrid_rank / strict_rank / other rank columns, unless the model is explicitly
+    a rank-calibration model
+  stage_f_label
+  stage_f_conservative_label
+  stage_f_reason
+  stage_e_visual_label
+  stage_h_label
+  visual_label
+  path/json/csv artifact references
+
+Leakage or excluded columns observed in inspected tables:
+  k2_hybrid_candidate_score_v2.csv:
+    hybrid_rank, manual_label_penalty, training_label_v2,
+    final_candidate_status, review_bin, events_csv, stage_f_source_csv,
+    stage_r_reason, events_csv_available, period_search_reason,
+    stage_d_reason, training_label_rule, is_labeled_in_ledger
+
+  k2_stage_f_hybrid_v2_validation.csv:
+    hybrid_rank, visual_label, stage_f_label, stage_f_reason,
+    summary_json_path, events_csv, stage_e_visual_label, phase_0_folded_path,
+    phase_05_secondary_check_path, alias_period_comparison_path,
+    odd_even_zoom_path, validation_summary_json_path
+
+  k2_stage_d_tier_a_results.csv:
+    stage_r_reason, events_csv, events_csv_available, period_search_reason,
+    stage_d_reason
+
+  k2_stage_d_pass_ranked.csv:
+    stage_d_reason
+
+8. candidate_like / planet_like rows
+------------------------------------
+  EPIC_211404127: candidate_like / science_like / promote_to_deeper_eval
+  EPIC_211534076: candidate_like / science_like / recovered_known_unconfirmed_candidate
+  EPIC_211759361: candidate_like / science_like / promote_to_deeper_eval
+  EPIC_211908778: candidate_like / science_like / promote_candidate_alias_check
+  EPIC_211954033: candidate_like / science_like / promote_candidate_alias_check
+  EPIC_211889692: planet_like / science_like / recovered_known_confirmed_planet
+  EPIC_212001099: planet_like / science_like / promote_primary_candidate
+
+Conclusion
+----------
+The frozen stage_f_closed_45 label file is join-ready for the primary current
+feature tables:
+  k2_hybrid_candidate_score_v2.csv: 45 / 45 labels joined
+  k2_stage_d_tier_a_results.csv: 45 / 45 labels joined
+
+No labeled EPIC is missing from the primary feature tables. For binary training,
+use 7 science_like positives and 31 not_science_like negatives, and exclude the
+7 unresolved/uncertain_hold rows.

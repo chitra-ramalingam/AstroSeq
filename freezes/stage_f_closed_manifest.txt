@@ -50,3 +50,32 @@ stage_g:
     policy: remains do-not-promote
   final_candidate_master_ledger_updated: false
   model_retraining_started: false
+
+stage_g_v2:
+  support_tier_review: freezes/stage_g_v2_support_tier_review.csv
+  policy_proposal: freezes/stage_g_v2_policy_proposal.txt
+  use_policy: support/prioritization only
+  manual_label_policy: Stage G v2 must not override manual labels
+  support_tier_counts:
+    strong_support: 3
+    review_support: 18
+    weak_support: 31
+  candidate_like_planet_like_by_tier:
+    strong_support: 2
+    review_support: 2
+    weak_support: 3
+  uncertain_hold_not_science_like_by_tier:
+    strong_support: 1
+    review_support: 16
+    weak_support: 21
+  strong_support_false_positive_risk:
+    epic_id: EPIC_211842439
+    policy: false-positive risk / do-not-promote
+  science_like_below_strong_support:
+    - EPIC_211954033
+    - EPIC_211889692
+    - EPIC_211908778
+    - EPIC_211404127
+    - EPIC_211759361
+  final_candidate_master_ledger_updated: false
+  model_retraining_started: false
